@@ -1,15 +1,14 @@
 // src/api/client.js
 import axios from "axios";
 
-// Dev example: VITE_API_BASE_URL=http://localhost:4000
-// Prod (behind your domain + Nginx): /lmisbackend/api
-const baseURL = import.meta.env.VITE_API_BASE_URL || "/lmisbackend/api";
+/**
+ * Dev: VITE_API_BASE_URL=http://localhost:4000
+ * Prod: VITE_API_BASE_URL=/lmisbackend
+ */
+const baseURL = import.meta.env.VITE_API_BASE_URL || "/lmisbackend";
 
-export const api = axios.create({
-  baseURL,
-});
+const api = axios.create({ baseURL });
 
-// Attach JWT if present
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem("accessToken");
@@ -19,7 +18,6 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Auto-logout on 401 (token expired/invalid)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -28,7 +26,7 @@ api.interceptors.response.use(
     if (status === 401) {
       localStorage.removeItem("accessToken");
 
-      // Redirect back to LMIS login route (your app is served under /lmis/)
+      // Your dashboard lives under /lmis/
       if (window.location.pathname !== "/lmis/") {
         window.location.href = "/lmis/";
       }
@@ -39,3 +37,4 @@ api.interceptors.response.use(
 );
 
 export default api;
+export { api };
