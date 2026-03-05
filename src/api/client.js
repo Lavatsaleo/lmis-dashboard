@@ -2,13 +2,25 @@
 import axios from "axios";
 
 /**
- * Dev: VITE_API_BASE_URL=http://localhost:4000
- * Prod: VITE_API_BASE_URL=/lmisbackend
+ * Server build (.env):
+ *   VITE_API_BASE_URL=/lmisbackend
+ * Dev example:
+ *   VITE_API_BASE_URL=http://localhost:4000
+ *
+ * This normalizes relative values (e.g. "lmisbackend") to "/lmisbackend"
+ * so the browser does NOT turn it into "/lmis/lmisbackend".
  */
-const baseURL = import.meta.env.VITE_API_BASE_URL || "/lmisbackend";
+function normalizeBaseUrl(raw) {
+  if (!raw) return "/lmisbackend";
+  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+  return raw.startsWith("/") ? raw : `/${raw}`;
+}
+
+const baseURL = normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL);
 
 const api = axios.create({ baseURL });
 
+// Attach JWT if present
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem("accessToken");
@@ -18,6 +30,7 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+// Auto-logout on 401 (token expired/invalid)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -26,7 +39,7 @@ api.interceptors.response.use(
     if (status === 401) {
       localStorage.removeItem("accessToken");
 
-      // Your dashboard lives under /lmis/
+      // Your dashboard is served under /lmis/
       if (window.location.pathname !== "/lmis/") {
         window.location.href = "/lmis/";
       }
