@@ -1,18 +1,23 @@
+// src/api/client.js
 import axios from "axios";
 
-// In dev you can set VITE_API_BASE_URL (e.g. http://localhost:4000).
-// In production (served behind Nginx), we default to the current origin.
-const baseURL = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+// Dev example: VITE_API_BASE_URL=http://localhost:4000
+// Prod (behind your domain + Nginx): /lmisbackend/api
+const baseURL = import.meta.env.VITE_API_BASE_URL || "/lmisbackend/api";
 
 export const api = axios.create({
   baseURL,
 });
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("accessToken");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
+// Attach JWT if present
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem("accessToken");
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
 
 // Auto-logout on 401 (token expired/invalid)
 api.interceptors.response.use(
@@ -23,12 +28,14 @@ api.interceptors.response.use(
     if (status === 401) {
       localStorage.removeItem("accessToken");
 
-      // Avoid redirect loop if already on root/login
-      if (window.location.pathname !== "/") {
-        window.location.href = "/";
+      // Redirect back to LMIS login route (your app is served under /lmis/)
+      if (window.location.pathname !== "/lmis/") {
+        window.location.href = "/lmis/";
       }
     }
 
     return Promise.reject(error);
   }
 );
+
+export default api;
