@@ -2,9 +2,25 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api/client";
 import {
-  Card, CardContent, Typography, Table, TableHead, TableRow,
-  TableCell, TableBody, Box, Chip
+  Card,
+  CardContent,
+  Typography,
+  Table,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableBody,
+  Box,
+  Chip,
 } from "@mui/material";
+
+const formatDate = (value) => {
+  if (!value) return "-";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "-" : d.toISOString().slice(0, 10);
+};
+
+const formatValue = (value) => (value ?? "-");
 
 export default function ChildDetails() {
   const { childId } = useParams();
@@ -28,14 +44,16 @@ export default function ChildDetails() {
             Child Registration #: {data.child.uniqueChildNumber}
           </Typography>
           <Typography color="text.secondary">
-            Enrolled: {data.child.enrollmentDate ? new Date(data.child.enrollmentDate).toISOString().slice(0, 10) : "-"}
+            Enrolled: {formatDate(data.child.enrollmentDate)}
           </Typography>
         </CardContent>
       </Card>
 
       <Card>
         <CardContent>
-          <Typography variant="h6" fontWeight={800} gutterBottom>Visits & Measurements</Typography>
+          <Typography variant="h6" fontWeight={800} gutterBottom>
+            Visits &amp; Measurements
+          </Typography>
           <Table size="small">
             <TableHead>
               <TableRow>
@@ -44,24 +62,32 @@ export default function ChildDetails() {
                 <TableCell align="right">Height (cm)</TableCell>
                 <TableCell align="right">MUAC (mm)</TableCell>
                 <TableCell align="right">WHZ</TableCell>
+                <TableCell align="right">Sachets Dispensed</TableCell>
                 <TableCell>Next Appointment</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {data.visits.map((v) => (
                 <TableRow key={v.id}>
-                  <TableCell>{v.visitDate ? new Date(v.visitDate).toISOString().slice(0, 10) : "-"}</TableCell>
-                  <TableCell align="right">{v.weightKg ?? "-"}</TableCell>
-                  <TableCell align="right">{v.heightCm ?? "-"}</TableCell>
+                  <TableCell>{formatDate(v.visitDate)}</TableCell>
+                  <TableCell align="right">{formatValue(v.weightKg)}</TableCell>
+                  <TableCell align="right">{formatValue(v.heightCm)}</TableCell>
                   <TableCell align="right">
-                    {v.muacMm ? <Chip size="small" label={v.muacMm} /> : "-"}
+                    {v.muacMm !== null && v.muacMm !== undefined ? (
+                      <Chip size="small" label={v.muacMm} />
+                    ) : (
+                      "-"
+                    )}
                   </TableCell>
-                  <TableCell align="right">{v.whzScore ?? "-"}</TableCell>
-                  <TableCell>{v.nextAppointmentDate ? new Date(v.nextAppointmentDate).toISOString().slice(0, 10) : "-"}</TableCell>
+                  <TableCell align="right">{formatValue(v.whzScore)}</TableCell>
+                  <TableCell align="right">{formatValue(v.sachetsDispensed)}</TableCell>
+                  <TableCell>{formatDate(v.nextAppointmentDate)}</TableCell>
                 </TableRow>
               ))}
               {data.visits.length === 0 ? (
-                <TableRow><TableCell colSpan={6}>No visits recorded yet.</TableCell></TableRow>
+                <TableRow>
+                  <TableCell colSpan={7}>No visits recorded yet.</TableCell>
+                </TableRow>
               ) : null}
             </TableBody>
           </Table>
