@@ -7,10 +7,12 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  MenuItem,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
-import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import PrintIcon from "@mui/icons-material/Print";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import { DataGrid } from "@mui/x-data-grid";
 import { api } from "../api/client";
@@ -20,6 +22,13 @@ function formatDate(value) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleString();
+}
+
+function toDateOnly(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
 }
 
 function getStatusColor(status) {
@@ -39,6 +48,11 @@ export default function Manifests() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const [toFilter, setToFilter] = useState("");
+  const [manifestFilter, setManifestFilter] = useState("");
+  const [dispatchDateFilter, setDispatchDateFilter] = useState("");
+  const [receivedDateFilter, setReceivedDateFilter] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -63,11 +77,11 @@ export default function Manifests() {
             item.waybillNumber ||
             item.referenceNumber ||
             "—",
-          fromFacility:
-            item.fromFacility?.name ||
-            item.fromFacilityName ||
-            item.sourceFacility?.name ||
-            item.sourceFacilityName ||
+          fromWarehouse:
+            item.fromWarehouse?.name ||
+            item.fromWarehouseName ||
+            item.sourceWarehouse?.name ||
+            item.sourceWarehouseName ||
             "—",
           toFacility:
             item.toFacility?.name ||
@@ -79,6 +93,7 @@ export default function Manifests() {
             item.boxesCount ??
             item.totalBoxes ??
             item.boxCount ??
+            item.itemCount ??
             item.shipmentItems?.length ??
             0,
           dispatchedAt: item.dispatchedAt || item.createdAt || null,
@@ -114,6 +129,44 @@ export default function Manifests() {
     };
   }, []);
 
+  const toOptions = useMemo(() => {
+    return [...new Set(rows.map((r) => r.toFacility).filter(Boolean))].sort(
+      (a, b) => a.localeCompare(b)
+    );
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    return rows.filter((row) => {
+      const matchesTo = !toFilter || row.toFacility === toFilter;
+
+      const matchesManifest =
+        !manifestFilter ||
+        String(row.manifestNumber || "")
+          .toLowerCase()
+          .includes(manifestFilter.toLowerCase());
+
+      const matchesDispatchDate =
+        !dispatchDateFilter || toDateOnly(row.dispatchedAt) === dispatchDateFilter;
+
+      const matchesReceivedDate =
+        !receivedDateFilter || toDateOnly(row.receivedAt) === receivedDateFilter;
+
+      return (
+        matchesTo &&
+        matchesManifest &&
+        matchesDispatchDate &&
+        matchesReceivedDate
+      );
+    });
+  }, [rows, toFilter, manifestFilter, dispatchDateFilter, receivedDateFilter]);
+
+  const clearFilters = () => {
+    setToFilter("");
+    setManifestFilter("");
+    setDispatchDateFilter("");
+    setReceivedDateFilter("");
+  };
+
   const columns = useMemo(
     () => [
       {
@@ -123,10 +176,10 @@ export default function Manifests() {
         minWidth: 180,
       },
       {
-        field: "fromFacility",
-        headerName: "From",
+        field: "fromWarehouse",
+        headerName: "From Warehouse",
         flex: 1.2,
-        minWidth: 180,
+        minWidth: 190,
       },
       {
         field: "toFacility",
@@ -174,8 +227,8 @@ export default function Manifests() {
       },
       {
         field: "actions",
-        headerName: "Waybill",
-        width: 130,
+        headerName: "Print PDF",
+        width: 150,
         sortable: false,
         filterable: false,
         renderCell: (params) =>
@@ -183,10 +236,17 @@ export default function Manifests() {
             <Button
               size="small"
               variant="outlined"
-              endIcon={<OpenInNewIcon />}
-              onClick={() => window.open(params.row.waybillUrl, "_blank")}
+              endIcon={<PrintIcon />}
+              onClick={() => {
+                const win = window.open(
+                  params.row.waybillUrl,
+                  "_blank",
+                  "noopener,noreferrer"
+                );
+                if (win) win.focus();
+              }}
             >
-              Open
+              Print PDF
             </Button>
           ) : (
             "—"
@@ -217,12 +277,80 @@ export default function Manifests() {
 
         <Chip
           icon={<Inventory2OutlinedIcon />}
-          label={`${rows.length} manifest${rows.length === 1 ? "" : "s"}`}
+          label={`${filteredRows.length} manifest${
+            filteredRows.length === 1 ? "" : "s"
+          }`}
           color="primary"
           variant="outlined"
           sx={{ fontWeight: 800 }}
         />
       </Stack>
+
+      <Card
+        elevation={0}
+        sx={{
+          border: "1px solid rgba(112,112,112,0.14)",
+          borderRadius: 3,
+          mb: 2,
+        }}
+      >
+        <CardContent sx={{ p: 2 }}>
+          <Stack
+            direction={{ xs: "column", md: "row" }}
+            spacing={2}
+            useFlexGap
+            flexWrap="wrap"
+          >
+            <TextField
+              label="Manifest Number"
+              value={manifestFilter}
+              onChange={(e) => setManifestFilter(e.target.value)}
+              size="small"
+              sx={{ minWidth: 220 }}
+            />
+
+            <TextField
+              select
+              label="To"
+              value={toFilter}
+              onChange={(e) => setToFilter(e.target.value)}
+              size="small"
+              sx={{ minWidth: 220 }}
+            >
+              <MenuItem value="">All</MenuItem>
+              {toOptions.map((option) => (
+                <MenuItem key={option} value={option}>
+                  {option}
+                </MenuItem>
+              ))}
+            </TextField>
+
+            <TextField
+              label="Dispatch Date"
+              type="date"
+              value={dispatchDateFilter}
+              onChange={(e) => setDispatchDateFilter(e.target.value)}
+              size="small"
+              InputLabelProps={{ shrink: true }}
+              sx={{ minWidth: 190 }}
+            />
+
+            <TextField
+              label="Received Date"
+              type="date"
+              value={receivedDateFilter}
+              onChange={(e) => setReceivedDateFilter(e.target.value)}
+              size="small"
+              InputLabelProps={{ shrink: true }}
+              sx={{ minWidth: 190 }}
+            />
+
+            <Button variant="outlined" onClick={clearFilters}>
+              Clear Filters
+            </Button>
+          </Stack>
+        </CardContent>
+      </Card>
 
       <Card
         elevation={0}
@@ -252,7 +380,7 @@ export default function Manifests() {
           ) : (
             <Box sx={{ width: "100%" }}>
               <DataGrid
-                rows={rows}
+                rows={filteredRows}
                 columns={columns}
                 autoHeight
                 disableRowSelectionOnClick
