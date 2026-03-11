@@ -25,6 +25,7 @@ import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import ChildCareIcon from "@mui/icons-material/ChildCare";
 import StorefrontIcon from "@mui/icons-material/Storefront";
 import PeopleAltIcon from "@mui/icons-material/PeopleAlt";
+import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn";
 
 import acfLogo from "../assets/acf-logo.png";
 
@@ -56,6 +57,7 @@ export default function DashboardLayout() {
         if (!mounted) return;
         setMeLoading(false);
       });
+
     return () => {
       mounted = false;
     };
@@ -63,24 +65,21 @@ export default function DashboardLayout() {
 
   const role = me?.role;
 
-  const nav = useMemo(
-    () => {
-      const items = [
-        { label: "Overview", to: "/overview", icon: <DashboardIcon /> },
-        { label: "Facility Store", to: "/facility-store", icon: <StorefrontIcon /> },
-        { label: "Alerts", to: "/alerts", icon: <WarningAmberIcon /> },
-        { label: "Children", to: "/children", icon: <ChildCareIcon /> },
-      ];
+  const nav = useMemo(() => {
+    const items = [
+      { label: "Overview", to: "/overview", icon: <DashboardIcon /> },
+      { label: "Facility Store", to: "/facility-store", icon: <StorefrontIcon /> },
+      { label: "Alerts", to: "/alerts", icon: <WarningAmberIcon /> },
+      { label: "Children", to: "/children", icon: <ChildCareIcon /> },
+      { label: "Manifests", to: "/manifests", icon: <AssignmentTurnedInIcon /> },
+    ];
 
-      // Super Admin only
-      if (role === "SUPER_ADMIN") {
-        items.push({ label: "Users", to: "/users", icon: <PeopleAltIcon /> });
-      }
+    if (role === "SUPER_ADMIN") {
+      items.push({ label: "Users", to: "/users", icon: <PeopleAltIcon /> });
+    }
 
-      return items;
-    },
-    [role]
-  );
+    return items;
+  }, [role]);
 
   const pageTitle =
     loc.pathname === "/users/new"
@@ -94,7 +93,6 @@ export default function DashboardLayout() {
 
   const DrawerContent = (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      {/* Branding */}
       <Box sx={{ p: 2.2, display: "flex", alignItems: "center", gap: 1.4 }}>
         <Box
           component="img"
@@ -114,7 +112,6 @@ export default function DashboardLayout() {
 
       <Divider />
 
-      {/* Nav */}
       <List sx={{ px: 1.2, py: 1.2 }}>
         {nav.map((n) => {
           const selected = loc.pathname === n.to || loc.pathname.startsWith(n.to + "/");
@@ -147,7 +144,6 @@ export default function DashboardLayout() {
 
       <Divider />
 
-      {/* Footer */}
       <Box sx={{ p: 2, display: "flex", alignItems: "center", gap: 1.2 }}>
         <Avatar sx={{ bgcolor: theme.palette.secondary.main, fontWeight: 900 }}>
           {(me?.fullName || me?.email || "A").slice(0, 1).toUpperCase()}
@@ -177,7 +173,6 @@ export default function DashboardLayout() {
 
   return (
     <Box sx={{ display: "flex" }}>
-      {/* Top Bar */}
       <AppBar
         position="fixed"
         elevation={0}
@@ -210,7 +205,6 @@ export default function DashboardLayout() {
         </Toolbar>
       </AppBar>
 
-      {/* Sidebar */}
       <Drawer
         variant={isMobile ? "temporary" : "permanent"}
         open={isMobile ? open : true}
@@ -231,7 +225,6 @@ export default function DashboardLayout() {
         {DrawerContent}
       </Drawer>
 
-      {/* Main */}
       <Box component="main" sx={{ flexGrow: 1, p: { xs: 2, md: 3 } }}>
         <Toolbar />
         <Outlet context={{ me }} />
