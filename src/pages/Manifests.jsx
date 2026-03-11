@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
   Alert,
   Box,
@@ -146,10 +146,12 @@ export default function Manifests() {
           .includes(manifestFilter.toLowerCase());
 
       const matchesDispatchDate =
-        !dispatchDateFilter || toDateOnly(row.dispatchedAt) === dispatchDateFilter;
+        !dispatchDateFilter ||
+        toDateOnly(row.dispatchedAt) === dispatchDateFilter;
 
       const matchesReceivedDate =
-        !receivedDateFilter || toDateOnly(row.receivedAt) === receivedDateFilter;
+        !receivedDateFilter ||
+        toDateOnly(row.receivedAt) === receivedDateFilter;
 
       return (
         matchesTo &&
@@ -166,6 +168,32 @@ export default function Manifests() {
     setDispatchDateFilter("");
     setReceivedDateFilter("");
   };
+
+  const handlePrintPdf = useCallback(async (row) => {
+    try {
+      setError("");
+
+      const response = await api.get(row.waybillUrl, {
+        responseType: "blob",
+      });
+
+      const blob = new Blob([response.data], { type: "application/pdf" });
+      const blobUrl = window.URL.createObjectURL(blob);
+
+      const win = window.open(blobUrl, "_blank", "noopener,noreferrer");
+      if (win) {
+        win.focus();
+      }
+
+      setTimeout(() => {
+        window.URL.revokeObjectURL(blobUrl);
+      }, 60000);
+    } catch (err) {
+      setError(
+        err?.response?.data?.message || "Failed to open the manifest PDF."
+      );
+    }
+  }, []);
 
   const columns = useMemo(
     () => [
@@ -237,14 +265,7 @@ export default function Manifests() {
               size="small"
               variant="outlined"
               endIcon={<PrintIcon />}
-              onClick={() => {
-                const win = window.open(
-                  params.row.waybillUrl,
-                  "_blank",
-                  "noopener,noreferrer"
-                );
-                if (win) win.focus();
-              }}
+              onClick={() => handlePrintPdf(params.row)}
             >
               Print PDF
             </Button>
@@ -253,7 +274,7 @@ export default function Manifests() {
           ),
       },
     ],
-    []
+    [handlePrintPdf]
   );
 
   return (
