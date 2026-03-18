@@ -26,6 +26,7 @@ import ChildCareIcon from "@mui/icons-material/ChildCare";
 import StorefrontIcon from "@mui/icons-material/Storefront";
 import PeopleAltIcon from "@mui/icons-material/PeopleAlt";
 import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn";
+import AssessmentIcon from "@mui/icons-material/Assessment";
 
 import acfLogo from "../assets/acf-logo.png";
 
@@ -72,6 +73,7 @@ export default function DashboardLayout() {
       { label: "Alerts", to: "/alerts", icon: <WarningAmberIcon /> },
       { label: "Children", to: "/children", icon: <ChildCareIcon /> },
       { label: "Manifests", to: "/manifests", icon: <AssignmentTurnedInIcon /> },
+      { label: "Reports", to: "/reports", icon: <AssessmentIcon /> },
     ];
 
     if (role === "SUPER_ADMIN") {
