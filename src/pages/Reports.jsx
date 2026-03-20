@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Link as RouterLink } from "react-router-dom";
 import { api } from "../api/client";
 import {
@@ -18,6 +18,7 @@ import {
   Link,
   Chip,
   Alert,
+  Divider,
 } from "@mui/material";
 
 function todayIso() {
@@ -36,6 +37,25 @@ function formatDate(value) {
   return Number.isNaN(d.getTime()) ? "-" : d.toISOString().slice(0, 10);
 }
 
+const REPORTS = {
+  missedAppointments: {
+    key: "missedAppointments",
+    title: "Missed Appointments",
+    description: "Children who missed their scheduled follow up visit",
+    endpoint: "/api/dashboard/reports/missed-appointments",
+    color: "error",
+    emptyText: "No missed appointments found for this date range.",
+  },
+  honouredFollowUps: {
+    key: "honouredFollowUps",
+    title: "Follow Up Visits Honoured",
+    description: "Children who returned on time or earlier for scheduled follow up visits",
+    endpoint: "/api/dashboard/reports/honoured-follow-ups",
+    color: "success",
+    emptyText: "No honoured follow up visits found for this date range.",
+  },
+};
+
 export default function Reports() {
   const [fromDate, setFromDate] = useState(daysAgoIso(30));
   const [toDate, setToDate] = useState(todayIso());
@@ -43,24 +63,66 @@ export default function Reports() {
   const [appliedFromDate, setAppliedFromDate] = useState(daysAgoIso(30));
   const [appliedToDate, setAppliedToDate] = useState(todayIso());
 
-  const [data, setData] = useState({
-    summary: { missedAppointments: 0 },
+  const [summaries, setSummaries] = useState({
+    missedAppointments: 0,
+    honouredFollowUps: 0,
+  });
+
+  const [detailData, setDetailData] = useState({
     rows: [],
     total: 0,
     take: 10,
     skip: 0,
   });
 
-  const [loading, setLoading] = useState(false);
+  const [selectedReport, setSelectedReport] = useState(null);
+
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState(false);
   const [err, setErr] = useState("");
-  const [showDetails, setShowDetails] = useState(false);
 
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
 
-  const loadReport = useCallback(async () => {
+  const selectedConfig = selectedReport ? REPORTS[selectedReport] : null;
+
+  const summaryParams = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set("fromDate", appliedFromDate);
+    params.set("toDate", appliedToDate);
+    params.set("take", "1");
+    params.set("skip", "0");
+    return params.toString();
+  }, [appliedFromDate, appliedToDate]);
+
+  const loadSummaries = useCallback(async () => {
     try {
-      setLoading(true);
+      setLoadingSummary(true);
+      setErr("");
+
+      const [missedRes, honouredRes] = await Promise.all([
+        api.get(`${REPORTS.missedAppointments.endpoint}?${summaryParams}`),
+        api.get(`${REPORTS.honouredFollowUps.endpoint}?${summaryParams}`),
+      ]);
+
+      setSummaries({
+        missedAppointments:
+          missedRes.data?.summary?.missedAppointments ?? missedRes.data?.total ?? 0,
+        honouredFollowUps:
+          honouredRes.data?.summary?.honouredFollowUps ?? honouredRes.data?.total ?? 0,
+      });
+    } catch (e) {
+      setErr(e?.response?.data?.message || e.message || "Failed to load reports");
+    } finally {
+      setLoadingSummary(false);
+    }
+  }, [summaryParams]);
+
+  const loadDetails = useCallback(async () => {
+    if (!selectedConfig) return;
+
+    try {
+      setLoadingDetails(true);
       setErr("");
 
       const skip = page * rowsPerPage;
@@ -70,13 +132,10 @@ export default function Reports() {
       params.set("take", String(rowsPerPage));
       params.set("skip", String(skip));
 
-      const res = await api.get(
-        `/api/dashboard/reports/missed-appointments?${params.toString()}`
-      );
+      const res = await api.get(`${selectedConfig.endpoint}?${params.toString()}`);
 
-      setData(
+      setDetailData(
         res.data || {
-          summary: { missedAppointments: 0 },
           rows: [],
           total: 0,
           take: rowsPerPage,
@@ -84,21 +143,29 @@ export default function Reports() {
         }
       );
     } catch (e) {
-      setErr(e?.response?.data?.message || e.message || "Failed to load report");
+      setErr(e?.response?.data?.message || e.message || "Failed to load report details");
     } finally {
-      setLoading(false);
+      setLoadingDetails(false);
     }
-  }, [appliedFromDate, appliedToDate, page, rowsPerPage]);
+  }, [selectedConfig, appliedFromDate, appliedToDate, page, rowsPerPage]);
 
   useEffect(() => {
-    loadReport();
-  }, [loadReport]);
+    loadSummaries();
+  }, [loadSummaries]);
+
+  useEffect(() => {
+    loadDetails();
+  }, [loadDetails]);
 
   const runReport = () => {
     setPage(0);
-    setShowDetails(false);
     setAppliedFromDate(fromDate);
     setAppliedToDate(toDate);
+  };
+
+  const openReport = (reportKey) => {
+    setSelectedReport(reportKey);
+    setPage(0);
   };
 
   const handleChangePage = (_, newPage) => {
@@ -110,9 +177,80 @@ export default function Reports() {
     setPage(0);
   };
 
+  const renderSummaryCard = (reportKey) => {
+    const report = REPORTS[reportKey];
+    const isSelected = selectedReport === reportKey;
+    const count = summaries[reportKey] ?? 0;
+
+    return (
+      <Card
+        key={report.key}
+        onClick={() => openReport(report.key)}
+        sx={{
+          cursor: "pointer",
+          borderRadius: 4,
+          border: isSelected ? "2px solid" : "1px solid",
+          borderColor: isSelected ? `${report.color}.main` : "divider",
+          transition: "0.2s ease",
+          "&:hover": {
+            transform: "translateY(-2px)",
+            boxShadow: 4,
+          },
+        }}
+      >
+        <CardContent>
+          <Stack spacing={1.5}>
+            <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+              <Box>
+                <Typography variant="h6" fontWeight={900}>
+                  {report.title}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {report.description}
+                </Typography>
+              </Box>
+
+              <Chip
+                size="small"
+                label={isSelected ? "Open" : "View"}
+                color={report.color}
+                variant={isSelected ? "filled" : "outlined"}
+              />
+            </Stack>
+
+            <Box>
+              <Typography variant="body2" color="text.secondary">
+                Total
+              </Typography>
+              <Typography
+                variant="h3"
+                fontWeight={900}
+                color={`${report.color}.main`}
+                sx={{ lineHeight: 1 }}
+              >
+                {loadingSummary ? "..." : count}
+              </Typography>
+            </Box>
+
+            <Button
+              variant={isSelected ? "contained" : "outlined"}
+              color={report.color}
+              onClick={(e) => {
+                e.stopPropagation();
+                openReport(report.key);
+              }}
+            >
+              Open Report
+            </Button>
+          </Stack>
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <Box sx={{ display: "grid", gap: 2.5 }}>
-      <Card>
+      <Card sx={{ borderRadius: 4 }}>
         <CardContent>
           <Stack
             direction={{ xs: "column", md: "row" }}
@@ -121,11 +259,11 @@ export default function Reports() {
             justifyContent="space-between"
           >
             <Box>
-              <Typography variant="h6" fontWeight={900}>
+              <Typography variant="h5" fontWeight={900}>
                 Reports
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Missed appointments report
+                Select a report, apply the date range, then open the detailed list
               </Typography>
             </Box>
 
@@ -158,62 +296,54 @@ export default function Reports() {
 
       {err ? <Alert severity="error">{err}</Alert> : null}
 
-      <Card>
+      <Card sx={{ borderRadius: 4 }}>
         <CardContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Date range: {appliedFromDate} to {appliedToDate}
           </Typography>
 
-          <Typography variant="body2" color="text.secondary">
-            Click the number to see the list of children with missed appointments.
-          </Typography>
-
           <Box
-            onClick={() => setShowDetails(true)}
             sx={{
-              mt: 2,
-              display: "inline-flex",
-              flexDirection: "column",
-              cursor: "pointer",
-              userSelect: "none",
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+              gap: 2,
             }}
           >
-            <Typography variant="body2" color="text.secondary">
-              Missed Appointments
-            </Typography>
-            <Typography
-              variant="h2"
-              fontWeight={900}
-              color="error.main"
-              sx={{ lineHeight: 1 }}
-            >
-              {loading ? "..." : data.summary?.missedAppointments ?? 0}
-            </Typography>
+            {renderSummaryCard("missedAppointments")}
+            {renderSummaryCard("honouredFollowUps")}
           </Box>
         </CardContent>
       </Card>
 
-      {showDetails ? (
-        <Card>
+      {selectedConfig ? (
+        <Card sx={{ borderRadius: 4 }}>
           <CardContent>
             <Stack
               direction={{ xs: "column", sm: "row" }}
               justifyContent="space-between"
               alignItems={{ xs: "stretch", sm: "center" }}
               sx={{ mb: 2 }}
+              spacing={1.5}
             >
-              <Typography variant="h6" fontWeight={900}>
-                Children with Missed Appointments
-              </Typography>
+              <Box>
+                <Typography variant="h6" fontWeight={900}>
+                  {selectedConfig.title}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {selectedConfig.description}
+                </Typography>
+              </Box>
 
               <Chip
-                label={`${data.total || 0} record(s)`}
-                color="error"
+                label={`${detailData.total || 0} record(s)`}
+                color={selectedConfig.color}
                 variant="outlined"
               />
             </Stack>
 
-            {loading ? (
+            <Divider sx={{ mb: 2 }} />
+
+            {loadingDetails ? (
               <Typography>Loading...</Typography>
             ) : (
               <>
@@ -223,16 +353,26 @@ export default function Reports() {
                       <TableCell>Registration #</TableCell>
                       <TableCell>Facility</TableCell>
                       <TableCell>Appointment Date</TableCell>
-                      <TableCell>Next Visit Date</TableCell>
-                      <TableCell align="right">Days Late</TableCell>
+                      <TableCell>
+                        {selectedReport === "missedAppointments"
+                          ? "Next Visit Date"
+                          : "Return Visit Date"}
+                      </TableCell>
+                      {selectedReport === "missedAppointments" ? (
+                        <TableCell align="right">Days Late</TableCell>
+                      ) : (
+                        <TableCell align="right">Days Early</TableCell>
+                      )}
                       <TableCell>Status</TableCell>
                       <TableCell>Action</TableCell>
                     </TableRow>
                   </TableHead>
 
                   <TableBody>
-                    {(data.rows || []).map((row) => (
-                      <TableRow key={row.appointmentId}>
+                    {(detailData.rows || []).map((row) => (
+                      <TableRow
+                        key={`${selectedReport}-${row.appointmentId}-${row.childId}`}
+                      >
                         <TableCell>
                           <Link component={RouterLink} to={`/children/${row.childId}`}>
                             {row.uniqueChildNumber || "-"}
@@ -241,9 +381,21 @@ export default function Reports() {
                         <TableCell>{row.facility?.name || "-"}</TableCell>
                         <TableCell>{formatDate(row.appointmentDate)}</TableCell>
                         <TableCell>{formatDate(row.nextVisitDate)}</TableCell>
-                        <TableCell align="right">{row.daysLate ?? 0}</TableCell>
+                        <TableCell align="right">
+                          {selectedReport === "missedAppointments"
+                            ? row.daysLate ?? 0
+                            : row.daysEarly ?? 0}
+                        </TableCell>
                         <TableCell>
-                          <Chip size="small" color="error" label="Missed" />
+                          <Chip
+                            size="small"
+                            color={selectedConfig.color}
+                            label={
+                              selectedReport === "missedAppointments"
+                                ? "Missed"
+                                : "Honoured"
+                            }
+                          />
                         </TableCell>
                         <TableCell>
                           <Link component={RouterLink} to={`/children/${row.childId}`}>
@@ -253,11 +405,9 @@ export default function Reports() {
                       </TableRow>
                     ))}
 
-                    {(!data.rows || data.rows.length === 0) && (
+                    {(!detailData.rows || detailData.rows.length === 0) && (
                       <TableRow>
-                        <TableCell colSpan={7}>
-                          No missed appointments found for this date range.
-                        </TableCell>
+                        <TableCell colSpan={7}>{selectedConfig.emptyText}</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -265,7 +415,7 @@ export default function Reports() {
 
                 <TablePagination
                   component="div"
-                  count={data.total || 0}
+                  count={detailData.total || 0}
                   page={page}
                   onPageChange={handleChangePage}
                   rowsPerPage={rowsPerPage}
