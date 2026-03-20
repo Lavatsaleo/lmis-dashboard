@@ -19,6 +19,10 @@ import {
   Chip,
   Alert,
   Divider,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from "@mui/material";
 
 function todayIso() {
@@ -59,9 +63,13 @@ const REPORTS = {
 export default function Reports() {
   const [fromDate, setFromDate] = useState(daysAgoIso(30));
   const [toDate, setToDate] = useState(todayIso());
+  const [facilityId, setFacilityId] = useState("");
 
   const [appliedFromDate, setAppliedFromDate] = useState(daysAgoIso(30));
   const [appliedToDate, setAppliedToDate] = useState(todayIso());
+  const [appliedFacilityId, setAppliedFacilityId] = useState("");
+
+  const [facilities, setFacilities] = useState([]);
 
   const [summaries, setSummaries] = useState({
     missedAppointments: 0,
@@ -75,7 +83,7 @@ export default function Reports() {
     skip: 0,
   });
 
-  const [selectedReport, setSelectedReport] = useState(null);
+  const [selectedReport, setSelectedReport] = useState("missedAppointments");
 
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -84,7 +92,18 @@ export default function Reports() {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
 
-  const selectedConfig = selectedReport ? REPORTS[selectedReport] : null;
+  const selectedConfig = REPORTS[selectedReport];
+
+  useEffect(() => {
+    api
+      .get("/api/facilities")
+      .then((res) => {
+        const rows = (res.data || []).filter((f) => f.type === "FACILITY");
+        rows.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        setFacilities(rows);
+      })
+      .catch(() => setFacilities([]));
+  }, []);
 
   const summaryParams = useMemo(() => {
     const params = new URLSearchParams();
@@ -92,8 +111,9 @@ export default function Reports() {
     params.set("toDate", appliedToDate);
     params.set("take", "1");
     params.set("skip", "0");
+    if (appliedFacilityId) params.set("facilityId", appliedFacilityId);
     return params.toString();
-  }, [appliedFromDate, appliedToDate]);
+  }, [appliedFromDate, appliedToDate, appliedFacilityId]);
 
   const loadSummaries = useCallback(async () => {
     try {
@@ -131,6 +151,7 @@ export default function Reports() {
       params.set("toDate", appliedToDate);
       params.set("take", String(rowsPerPage));
       params.set("skip", String(skip));
+      if (appliedFacilityId) params.set("facilityId", appliedFacilityId);
 
       const res = await api.get(`${selectedConfig.endpoint}?${params.toString()}`);
 
@@ -147,7 +168,7 @@ export default function Reports() {
     } finally {
       setLoadingDetails(false);
     }
-  }, [selectedConfig, appliedFromDate, appliedToDate, page, rowsPerPage]);
+  }, [selectedConfig, appliedFromDate, appliedToDate, appliedFacilityId, page, rowsPerPage]);
 
   useEffect(() => {
     loadSummaries();
@@ -161,6 +182,7 @@ export default function Reports() {
     setPage(0);
     setAppliedFromDate(fromDate);
     setAppliedToDate(toDate);
+    setAppliedFacilityId(facilityId);
   };
 
   const openReport = (reportKey) => {
@@ -263,11 +285,27 @@ export default function Reports() {
                 Reports
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Select a report, apply the date range, then open the detailed list
+                Select a report, apply the date range and facility filter, then open the detailed list
               </Typography>
             </Box>
 
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+              <FormControl size="small" sx={{ minWidth: 220 }}>
+                <InputLabel>Facility</InputLabel>
+                <Select
+                  label="Facility"
+                  value={facilityId}
+                  onChange={(e) => setFacilityId(e.target.value)}
+                >
+                  <MenuItem value="">All Facilities</MenuItem>
+                  {facilities.map((f) => (
+                    <MenuItem key={f.id} value={f.id}>
+                      {f.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
               <TextField
                 label="From Date"
                 type="date"
@@ -300,6 +338,9 @@ export default function Reports() {
         <CardContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Date range: {appliedFromDate} to {appliedToDate}
+            {appliedFacilityId
+              ? ` • Facility: ${facilities.find((f) => f.id === appliedFacilityId)?.name || "Selected Facility"}`
+              : " • Facility: All Facilities"}
           </Typography>
 
           <Box
