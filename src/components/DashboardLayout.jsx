@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { api } from "../api/client";
+import { api, clearSessionAndRedirect } from "../api/client";
 import {
   Box,
   Drawer,
@@ -89,8 +89,7 @@ export default function DashboardLayout() {
       : nav.find((n) => loc.pathname === n.to || loc.pathname.startsWith(n.to + "/"))?.label || "Dashboard";
 
   const logout = () => {
-    localStorage.removeItem("accessToken");
-    window.location.href = "/";
+    clearSessionAndRedirect();
   };
 
   const DrawerContent = (

@@ -16,6 +16,17 @@ function normalizeBaseUrl(raw) {
   return raw.startsWith("/") ? raw : `/${raw}`;
 }
 
+function clearSessionAndRedirect() {
+  localStorage.removeItem("accessToken");
+  localStorage.removeItem("sessionStartedAt");
+  localStorage.removeItem("lastActivityAt");
+
+  // Your dashboard is served under /lmis/
+  if (window.location.pathname !== "/lmis/") {
+    window.location.href = "/lmis/";
+  }
+}
+
 const baseURL = normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL);
 
 const api = axios.create({ baseURL });
@@ -37,12 +48,7 @@ api.interceptors.response.use(
     const status = error?.response?.status;
 
     if (status === 401) {
-      localStorage.removeItem("accessToken");
-
-      // Your dashboard is served under /lmis/
-      if (window.location.pathname !== "/lmis/") {
-        window.location.href = "/lmis/";
-      }
+      clearSessionAndRedirect();
     }
 
     return Promise.reject(error);
@@ -50,4 +56,4 @@ api.interceptors.response.use(
 );
 
 export default api;
-export { api };
+export { api, clearSessionAndRedirect };

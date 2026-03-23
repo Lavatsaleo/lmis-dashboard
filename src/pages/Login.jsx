@@ -14,7 +14,12 @@ export default function Login({ onLoggedIn }) {
       const res = await api.post("/api/auth/login", { email, password });
       const token = res.data?.accessToken || res.data?.token;
       if (!token) throw new Error("No token returned from login");
+
+      const now = Date.now();
       localStorage.setItem("accessToken", token);
+      localStorage.setItem("sessionStartedAt", String(now));
+      localStorage.setItem("lastActivityAt", String(now));
+
       onLoggedIn();
     } catch (e2) {
       setErr(e2?.response?.data?.message || e2.message);
