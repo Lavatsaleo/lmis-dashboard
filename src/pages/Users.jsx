@@ -23,6 +23,10 @@ import {
   Switch,
   Snackbar,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 
@@ -36,6 +40,23 @@ const ROLE_OPTIONS = [
   "VIEWER",
 ];
 
+function genPassword() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#$!";
+  let out = "";
+  for (let i = 0; i < 12; i += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  if (!/[!@#$]/.test(out)) out = `${out.slice(0, 11)}!`;
+  return out;
+}
+
+function formatLastLogin(value) {
+  if (!value) return "Never";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString();
+}
+
 export default function Users() {
   const { me } = useOutletContext();
 
@@ -46,11 +67,17 @@ export default function Users() {
 
   const [q, setQ] = useState("");
   const [role, setRole] = useState("");
-  const [status, setStatus] = useState(""); // "" | "active" | "disabled"
+  const [status, setStatus] = useState("");
   const [facilityCode, setFacilityCode] = useState("");
 
   const [facilities, setFacilities] = useState([]);
   const [toast, setToast] = useState({ open: false, msg: "", severity: "success" });
+
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetUser, setResetUser] = useState(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [resetSaving, setResetSaving] = useState(false);
 
   const isSuperAdmin = me?.role === "SUPER_ADMIN";
 
@@ -102,6 +129,46 @@ export default function Users() {
     }
   };
 
+  const openResetDialog = (user) => {
+    setResetUser(user);
+    const generated = genPassword();
+    setNewPassword(generated);
+    setConfirmPassword(generated);
+    setResetOpen(true);
+  };
+
+  const closeResetDialog = () => {
+    if (resetSaving) return;
+    setResetOpen(false);
+    setResetUser(null);
+    setNewPassword("");
+    setConfirmPassword("");
+  };
+
+  const resetPassword = async () => {
+    if (!resetUser) return;
+    if (newPassword.trim().length < 8) {
+      setToast({ open: true, msg: "Password must be at least 8 characters.", severity: "error" });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setToast({ open: true, msg: "Passwords do not match.", severity: "error" });
+      return;
+    }
+
+    try {
+      setResetSaving(true);
+      await api.patch(`/api/admin/users/${resetUser.id}`, { password: newPassword });
+      setToast({ open: true, msg: `Password reset for ${resetUser.fullName}.`, severity: "success" });
+      closeResetDialog();
+      load();
+    } catch (e) {
+      setToast({ open: true, msg: e?.response?.data?.message || e.message, severity: "error" });
+    } finally {
+      setResetSaving(false);
+    }
+  };
+
   if (!isSuperAdmin) {
     return (
       <Card sx={{ overflow: "hidden" }}>
@@ -127,7 +194,7 @@ export default function Users() {
                 Users
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Create, enable/disable accounts and assign roles/facilities.
+                Create users, reset passwords, enable or disable accounts, and review last login activity.
               </Typography>
             </Box>
 
@@ -172,11 +239,7 @@ export default function Users() {
 
             <FormControl size="small" sx={{ minWidth: { xs: "100%", lg: 280 } }}>
               <InputLabel>Facility</InputLabel>
-              <Select
-                label="Facility"
-                value={facilityCode}
-                onChange={(e) => setFacilityCode(e.target.value)}
-              >
+              <Select label="Facility" value={facilityCode} onChange={(e) => setFacilityCode(e.target.value)}>
                 <MenuItem value="">All facilities</MenuItem>
                 {facilities.map((f) => (
                   <MenuItem key={f.id} value={f.code}>
@@ -211,13 +274,15 @@ export default function Users() {
                   <TableCell>Email</TableCell>
                   <TableCell>Role</TableCell>
                   <TableCell>Facility</TableCell>
+                  <TableCell>Last login</TableCell>
                   <TableCell align="center">Active</TableCell>
+                  <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={5}>Loading…</TableCell>
+                    <TableCell colSpan={7}>Loading…</TableCell>
                   </TableRow>
                 ) : null}
 
@@ -228,9 +293,8 @@ export default function Users() {
                     <TableCell>
                       <Chip size="small" label={u.role} />
                     </TableCell>
-                    <TableCell>
-                      {u.facility ? `${u.facility.name} (${u.facility.code})` : "-"}
-                    </TableCell>
+                    <TableCell>{u.facility ? `${u.facility.name} (${u.facility.code})` : "-"}</TableCell>
+                    <TableCell>{formatLastLogin(u.lastLoginAt)}</TableCell>
                     <TableCell align="center">
                       <Switch
                         checked={!!u.isActive}
@@ -238,12 +302,17 @@ export default function Users() {
                         inputProps={{ "aria-label": "toggle active" }}
                       />
                     </TableCell>
+                    <TableCell align="right">
+                      <Button size="small" variant="outlined" onClick={() => openResetDialog(u)}>
+                        Reset Password
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
 
                 {!loading && rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5}>No users found.</TableCell>
+                    <TableCell colSpan={7}>No users found.</TableCell>
                   </TableRow>
                 ) : null}
               </TableBody>
@@ -251,6 +320,50 @@ export default function Users() {
           </TableContainer>
         </CardContent>
       </Card>
+
+      <Dialog open={resetOpen} onClose={closeResetDialog} fullWidth maxWidth="sm">
+        <DialogTitle>Reset password</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Alert severity="info">
+              You are resetting the password for <strong>{resetUser?.fullName || "this user"}</strong>.
+            </Alert>
+
+            <TextField
+              label="New password"
+              type="text"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              fullWidth
+              helperText="Minimum 8 characters."
+            />
+
+            <TextField
+              label="Confirm password"
+              type="text"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              fullWidth
+            />
+
+            <Box>
+              <Button variant="text" onClick={() => {
+                const generated = genPassword();
+                setNewPassword(generated);
+                setConfirmPassword(generated);
+              }}>
+                Generate strong password
+              </Button>
+            </Box>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeResetDialog} disabled={resetSaving}>Cancel</Button>
+          <Button onClick={resetPassword} variant="contained" disabled={resetSaving}>
+            {resetSaving ? "Saving..." : "Reset Password"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={toast.open}
