@@ -20,13 +20,72 @@ import {
   TablePagination,
   Stack,
   Button,
+  Alert,
 } from "@mui/material";
+
+const EXPORT_PAGE_SIZE = 200;
+
+const formatDate = (value) => {
+  if (!value) return "";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+};
+
+const xmlEscape = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+function downloadExcelXml({ filename, sheetName, headers, rows }) {
+  const headerXml = headers
+    .map((h) => `<Cell><Data ss:Type="String">${xmlEscape(h)}</Data></Cell>`)
+    .join("");
+
+  const rowXml = rows
+    .map((row) => {
+      const cells = headers
+        .map((h) => `<Cell><Data ss:Type="String">${xmlEscape(row[h])}</Data></Cell>`)
+        .join("");
+      return `<Row>${cells}</Row>`;
+    })
+    .join("");
+
+  const workbook = `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+  xmlns:o="urn:schemas-microsoft-com:office:office"
+  xmlns:x="urn:schemas-microsoft-com:office:excel"
+  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+  xmlns:html="http://www.w3.org/TR/REC-html40">
+  <Worksheet ss:Name="${xmlEscape(sheetName).slice(0, 31) || "Children"}">
+    <Table>
+      <Row>${headerXml}</Row>
+      ${rowXml}
+    </Table>
+  </Worksheet>
+</Workbook>`;
+
+  const blob = new Blob([workbook], {
+    type: "application/vnd.ms-excel;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 export default function Children() {
   const [data, setData] = useState({ rows: [], total: 0, take: 10, skip: 0 });
   const [facilities, setFacilities] = useState([]);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const [q, setQ] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -44,19 +103,27 @@ export default function Children() {
     }
   }, []);
 
+  const buildChildParams = useCallback(
+    ({ take, skip }) => {
+      const params = new URLSearchParams();
+      params.set("take", String(take));
+      params.set("skip", String(skip));
+
+      if (q) params.set("q", q);
+      if (facilityId) params.set("facilityId", facilityId);
+
+      return params;
+    },
+    [q, facilityId]
+  );
+
   const loadChildren = useCallback(async () => {
     try {
       setLoading(true);
       setErr("");
 
       const skip = page * rowsPerPage;
-
-      const params = new URLSearchParams();
-      params.set("take", String(rowsPerPage));
-      params.set("skip", String(skip));
-
-      if (q) params.set("q", q);
-      if (facilityId) params.set("facilityId", facilityId);
+      const params = buildChildParams({ take: rowsPerPage, skip });
 
       const res = await api.get(`/api/dashboard/children?${params.toString()}`);
       setData(res.data || { rows: [], total: 0, take: rowsPerPage, skip });
@@ -65,7 +132,7 @@ export default function Children() {
     } finally {
       setLoading(false);
     }
-  }, [page, rowsPerPage, q, facilityId]);
+  }, [page, rowsPerPage, buildChildParams]);
 
   useEffect(() => {
     loadFacilities();
@@ -93,6 +160,76 @@ export default function Children() {
     const value = parseInt(e.target.value, 10);
     setRowsPerPage(value);
     setPage(0);
+  };
+
+  const handleExport = async () => {
+    try {
+      setExporting(true);
+      setErr("");
+
+      let skip = 0;
+      let total = null;
+      const allRows = [];
+
+      while (total === null || skip < total) {
+        const params = buildChildParams({ take: EXPORT_PAGE_SIZE, skip });
+        const res = await api.get(`/api/dashboard/children?${params.toString()}`);
+        const body = res.data || {};
+        const rows = Array.isArray(body.rows) ? body.rows : [];
+        total = Number(body.total || 0);
+        allRows.push(...rows);
+
+        if (!rows.length) break;
+        skip += rows.length;
+      }
+
+      if (!allRows.length) {
+        setErr("There are no children to export for the selected filters.");
+        return;
+      }
+
+      const selectedFacilityName = facilityId
+        ? facilities.find((f) => f.id === facilityId)?.name || "Selected facility"
+        : "All facilities";
+
+      const headers = [
+        "Registration Number",
+        "CWC Number",
+        "Facility Code",
+        "Facility Name",
+        "Sex",
+        "Date of Birth",
+        "Enrollment Date",
+      ];
+
+      const rows = allRows.map((c) => ({
+        "Registration Number": c.uniqueChildNumber || "",
+        "CWC Number": c.cwcNumber || "",
+        "Facility Code": c.facility?.code || "",
+        "Facility Name": c.facility?.name || "",
+        Sex: c.sex || "",
+        "Date of Birth": formatDate(c.dateOfBirth),
+        "Enrollment Date": formatDate(c.enrollmentDate),
+      }));
+
+      const today = new Date().toISOString().slice(0, 10);
+      const safeFacility = selectedFacilityName
+        .replace(/[^a-z0-9]+/gi, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 50);
+      const suffix = q ? `_search_${q.replace(/[^a-z0-9]+/gi, "_").slice(0, 30)}` : "";
+
+      downloadExcelXml({
+        filename: `children_export_${safeFacility || "all"}${suffix}_${today}.xls`,
+        sheetName: "Children",
+        headers,
+        rows,
+      });
+    } catch (e) {
+      setErr(e?.response?.data?.message || e.message || "Failed to export children");
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -143,13 +280,21 @@ export default function Children() {
             <Button variant="contained" onClick={handleSearch}>
               Search
             </Button>
+
+            <Button variant="outlined" onClick={handleExport} disabled={exporting || loading}>
+              {exporting ? "Exporting..." : "Export Excel"}
+            </Button>
           </Stack>
         </Stack>
 
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+          Export uses the same search and facility filters currently applied to this page.
+        </Typography>
+
         {err ? (
-          <Typography color="error" sx={{ mt: 2 }}>
-            Error: {err}
-          </Typography>
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {err}
+          </Alert>
         ) : null}
 
         {loading ? (

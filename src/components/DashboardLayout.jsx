@@ -72,6 +72,7 @@ export default function DashboardLayout() {
       { label: "Facility Store", to: "/facility-store", icon: <StorefrontIcon /> },
       { label: "Alerts", to: "/alerts", icon: <WarningAmberIcon /> },
       { label: "Children", to: "/children", icon: <ChildCareIcon /> },
+      { label: "Duplicate Review", to: "/duplicate-cases", icon: <WarningAmberIcon /> },
       { label: "Manifests", to: "/manifests", icon: <AssignmentTurnedInIcon /> },
       { label: "Reports", to: "/reports", icon: <AssessmentIcon /> },
     ];

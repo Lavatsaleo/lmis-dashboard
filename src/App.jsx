@@ -6,6 +6,7 @@ import Overview from "./pages/Overview";
 import Alerts from "./pages/Alerts";
 import Children from "./pages/Children";
 import ChildDetails from "./pages/ChildDetails";
+import DuplicateCases from "./pages/DuplicateCases";
 import FacilityStore from "./pages/FacilityStore";
 import Users from "./pages/Users";
 import AddUser from "./pages/AddUser";
@@ -114,6 +115,7 @@ export default function App() {
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/children" element={<Children />} />
         <Route path="/children/:childId" element={<ChildDetails />} />
+        <Route path="/duplicate-cases" element={<DuplicateCases />} />
         <Route path="/manifests" element={<Manifests />} />
         <Route path="/reports" element={<Reports />} />
 
