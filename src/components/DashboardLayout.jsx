@@ -65,24 +65,46 @@ export default function DashboardLayout() {
   }, []);
 
   const role = me?.role;
+  const platformContext = me?.platformContext || null;
+  const implementationConfigured = Boolean(platformContext?.implementation?.id);
+  const enabledModules = Array.isArray(platformContext?.enabledModules)
+    ? platformContext.enabledModules
+    : [];
+
+  // Legacy fallback keeps the current Kenya dashboard usable during a staged
+  // deployment where the frontend may briefly reach an older backend.
+  const moduleEnabled = (code) =>
+    !implementationConfigured || enabledModules.includes(code);
+  const logisticsVisible = moduleEnabled("LOGISTICS") || moduleEnabled("PHARMACY");
+  const clinicalVisible = moduleEnabled("CLINICAL");
 
   const nav = useMemo(() => {
     const items = [
       { label: "Overview", to: "/overview", icon: <DashboardIcon /> },
-      { label: "Facility Store", to: "/facility-store", icon: <StorefrontIcon /> },
-      { label: "Alerts", to: "/alerts", icon: <WarningAmberIcon /> },
-      { label: "Children", to: "/children", icon: <ChildCareIcon /> },
-      { label: "Duplicate Review", to: "/duplicate-cases", icon: <WarningAmberIcon /> },
-      { label: "Manifests", to: "/manifests", icon: <AssignmentTurnedInIcon /> },
-      { label: "Reports", to: "/reports", icon: <AssessmentIcon /> },
     ];
+
+    if (logisticsVisible) {
+      items.push(
+        { label: "Facility Store", to: "/facility-store", icon: <StorefrontIcon /> },
+        { label: "Alerts", to: "/alerts", icon: <WarningAmberIcon /> },
+        { label: "Manifests", to: "/manifests", icon: <AssignmentTurnedInIcon /> },
+      );
+    }
+
+    if (clinicalVisible) {
+      items.push(
+        { label: "Children", to: "/children", icon: <ChildCareIcon /> },
+        { label: "Duplicate Review", to: "/duplicate-cases", icon: <WarningAmberIcon /> },
+        { label: "Reports", to: "/reports", icon: <AssessmentIcon /> },
+      );
+    }
 
     if (role === "SUPER_ADMIN") {
       items.push({ label: "Users", to: "/users", icon: <PeopleAltIcon /> });
     }
 
     return items;
-  }, [role]);
+  }, [role, logisticsVisible, clinicalVisible]);
 
   const pageTitle =
     loc.pathname === "/users/new"
@@ -109,6 +131,13 @@ export default function DashboardLayout() {
           <Typography variant="body2" color="text.secondary">
             LMIS Dashboard
           </Typography>
+          {platformContext?.country?.name || platformContext?.implementation?.name ? (
+            <Typography variant="caption" color="primary" fontWeight={800}>
+              {[platformContext?.country?.name, platformContext?.implementation?.name]
+                .filter(Boolean)
+                .join(" • ")}
+            </Typography>
+          ) : null}
         </Box>
       </Box>
 
