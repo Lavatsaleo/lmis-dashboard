@@ -28,12 +28,13 @@ function fmt(n) {
 
 function Kpi({ title, value }) {
   return (
-    <Card sx={{ overflow: "hidden" }}>
-      <CardContent sx={{ py: 2.2 }}>
+    // Label on top, number pinned to the bottom so tiles in a row line up.
+    <Card sx={{ overflow: "hidden", height: "100%" }}>
+      <CardContent sx={{ height: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 1 }}>
         <Typography variant="body2" color="text.secondary">
           {title}
         </Typography>
-        <Typography variant="h4" sx={{ mt: 0.5 }}>
+        <Typography variant="h4" sx={{ fontWeight: 800, lineHeight: 1.1 }}>
           {fmt(value)}
         </Typography>
       </CardContent>
@@ -43,8 +44,11 @@ function Kpi({ title, value }) {
 
 export default function FacilityStore() {
   const [facilities, setFacilities] = useState([]);
+  const [facilitiesLoaded, setFacilitiesLoaded] = useState(false);
   const [facilityId, setFacilityId] = useState("");
-  const [data, setData] = useState(null);
+  // Store data tagged with the facility it belongs to, so switching facility
+  // shows "loading" until that facility's data arrives.
+  const [store, setStore] = useState({ facilityId: null, data: null });
   const [err, setErr] = useState("");
 
   // settings (can be made UI controls later)
@@ -60,6 +64,7 @@ export default function FacilityStore() {
         const rows = (res.data || []).filter((f) => f.type === "FACILITY");
         rows.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         setFacilities(rows);
+        setFacilitiesLoaded(true);
         if (rows.length && !facilityId) setFacilityId(rows[0].id);
       })
       .catch((e) => setErr(e?.response?.data?.message || e.message));
@@ -69,16 +74,21 @@ export default function FacilityStore() {
   // Load facility store data
   useEffect(() => {
     if (!facilityId) return;
-    setErr("");
-    setData(null);
 
     api
       .get(
         `/api/dashboard/facilities/${facilityId}/store?days=${days}&expiryWarnDays=${expiryWarnDays}&stockoutThresholdDays=${stockoutThresholdDays}`
       )
-      .then((res) => setData(res.data))
+      .then((res) => {
+        setErr("");
+        setStore({ facilityId, data: res.data });
+      })
       .catch((e) => setErr(e?.response?.data?.message || e.message));
   }, [facilityId]);
+
+  const data = store.facilityId === facilityId ? store.data : null;
+  // Base unit of the products in scope (e.g. "Sachets"), from the API.
+  const units = data?.unit?.plural || "Sachets";
 
   const riskCount = useMemo(() => {
     if (!data) return 0;
@@ -86,6 +96,10 @@ export default function FacilityStore() {
   }, [data]);
 
   if (err) return <Typography color="error">Error: {err}</Typography>;
+  if (!facilitiesLoaded) return <Typography>Loading facilities...</Typography>;
+  if (!facilities.length) {
+    return <Typography color="text.secondary">No facilities are available in your scope, so there is no facility store to show.</Typography>;
+  }
   if (!facilityId) return <Typography>Loading facilities...</Typography>;
   if (!data) return <Typography>Loading facility store...</Typography>;
 
@@ -131,15 +145,15 @@ export default function FacilityStore() {
       <Box
         sx={{
           display: "grid",
-          gap: 2,
+          gap: { xs: 1.5, sm: 2 },
           gridTemplateColumns: {
-            xs: "1fr",
+            xs: "repeat(2, minmax(0, 1fr))",
             md: "repeat(3, 1fr)",
           },
         }}
       >
         <Kpi title="Boxes on Hand" value={data.kpis.boxesOnHand} />
-        <Kpi title="Sachets Remaining" value={data.kpis.sachetsRemaining} />
+        <Kpi title={`${units} Remaining`} value={data.kpis.sachetsRemaining} />
         <Kpi title="Products at Stockout Risk" value={riskCount} />
       </Box>
 
@@ -165,7 +179,7 @@ export default function FacilityStore() {
                 <TableRow>
                   <TableCell>Product</TableCell>
                   <TableCell align="right">Boxes</TableCell>
-                  <TableCell align="right">On Hand (Sachets)</TableCell>
+                  <TableCell align="right">On Hand ({units})</TableCell>
                   <TableCell align="right">Avg/Day</TableCell>
                   <TableCell align="right">Days of Stock</TableCell>
                   <TableCell>Risk</TableCell>
@@ -239,7 +253,7 @@ export default function FacilityStore() {
                   <TableCell>Product</TableCell>
                   <TableCell>Batch</TableCell>
                   <TableCell>Expiry</TableCell>
-                  <TableCell align="right">Sachets Remaining</TableCell>
+                  <TableCell align="right">{units} Remaining</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>

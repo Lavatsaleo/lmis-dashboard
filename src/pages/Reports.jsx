@@ -10,6 +10,7 @@ import {
   TextField,
   Button,
   Table,
+  TableContainer,
   TableHead,
   TableRow,
   TableCell,
@@ -25,14 +26,23 @@ import {
   MenuItem,
 } from "@mui/material";
 
+// Local calendar date (YYYY-MM-DD). toISOString() is UTC, which in Kenya
+// (UTC+3) gives yesterday's date between midnight and 03:00.
+function localIso(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return localIso(new Date());
 }
 
 function daysAgoIso(days) {
   const d = new Date();
   d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
+  return localIso(d);
 }
 
 function formatDate(value) {
@@ -58,7 +68,17 @@ const REPORTS = {
     color: "success",
     emptyText: "No honoured follow up visits found for this date range.",
   },
+  notDispensed: {
+    key: "notDispensed",
+    title: "Children Not Dispensed",
+    description: "Visits where nothing could be dispensed, e.g. enrolled while the facility was out of stock",
+    endpoint: "/api/dashboard/reports/not-dispensed",
+    color: "warning",
+    emptyText: "No visits without dispensing found for this date range.",
+  },
 };
+
+const NOT_DISPENSED_REASON_LABELS = { STOCK_OUT: "Out of stock" };
 
 export default function Reports() {
   const [fromDate, setFromDate] = useState(daysAgoIso(30));
@@ -74,6 +94,7 @@ export default function Reports() {
   const [summaries, setSummaries] = useState({
     missedAppointments: 0,
     honouredFollowUps: 0,
+    notDispensed: 0,
   });
 
   const [detailData, setDetailData] = useState({
@@ -120,9 +141,10 @@ export default function Reports() {
       setLoadingSummary(true);
       setErr("");
 
-      const [missedRes, honouredRes] = await Promise.all([
+      const [missedRes, honouredRes, notDispensedRes] = await Promise.all([
         api.get(`${REPORTS.missedAppointments.endpoint}?${summaryParams}`),
         api.get(`${REPORTS.honouredFollowUps.endpoint}?${summaryParams}`),
+        api.get(`${REPORTS.notDispensed.endpoint}?${summaryParams}`),
       ]);
 
       setSummaries({
@@ -130,6 +152,8 @@ export default function Reports() {
           missedRes.data?.summary?.missedAppointments ?? missedRes.data?.total ?? 0,
         honouredFollowUps:
           honouredRes.data?.summary?.honouredFollowUps ?? honouredRes.data?.total ?? 0,
+        notDispensed:
+          notDispensedRes.data?.summary?.notDispensed ?? notDispensedRes.data?.total ?? 0,
       });
     } catch (e) {
       setErr(e?.response?.data?.message || e.message || "Failed to load reports");
@@ -346,12 +370,13 @@ export default function Reports() {
           <Box
             sx={{
               display: "grid",
-              gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+              gridTemplateColumns: { xs: "1fr", md: "1fr 1fr", lg: "1fr 1fr 1fr" },
               gap: 2,
             }}
           >
             {renderSummaryCard("missedAppointments")}
             {renderSummaryCard("honouredFollowUps")}
+            {renderSummaryCard("notDispensed")}
           </Box>
         </CardContent>
       </Card>
@@ -386,8 +411,70 @@ export default function Reports() {
 
             {loadingDetails ? (
               <Typography>Loading...</Typography>
+            ) : selectedReport === "notDispensed" ? (
+              <>
+                <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Registration #</TableCell>
+                      <TableCell>Facility</TableCell>
+                      <TableCell>Visit Date</TableCell>
+                      <TableCell align="right">Sachets Prescribed</TableCell>
+                      <TableCell>Reason</TableCell>
+                      <TableCell>Dispensed Since</TableCell>
+                      <TableCell>Action</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {(detailData.rows || []).map((row) => (
+                      <TableRow key={`notDispensed-${row.visitId}`}>
+                        <TableCell>
+                          <Link component={RouterLink} to={`/children/${row.childId}`}>
+                            {row.uniqueChildNumber || "-"}
+                          </Link>
+                        </TableCell>
+                        <TableCell>{row.facility?.name || "-"}</TableCell>
+                        <TableCell>{formatDate(row.visitDate)}</TableCell>
+                        <TableCell align="right">{row.sachetsPrescribed ?? "-"}</TableCell>
+                        <TableCell>
+                          <Chip size="small" color="warning" label={NOT_DISPENSED_REASON_LABELS[row.reason] || row.reason || "-"} />
+                        </TableCell>
+                        <TableCell>
+                          {row.dispensedLaterOn ? (
+                            formatDate(row.dispensedLaterOn)
+                          ) : (
+                            <Chip size="small" color="error" variant="outlined" label="Still waiting" />
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Link component={RouterLink} to={`/children/${row.childId}`}>
+                            View Child
+                          </Link>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {(!detailData.rows || detailData.rows.length === 0) && (
+                      <TableRow>
+                        <TableCell colSpan={7}>{selectedConfig.emptyText}</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+                </TableContainer>
+                <TablePagination
+                  component="div"
+                  count={detailData.total || 0}
+                  page={page}
+                  onPageChange={handleChangePage}
+                  rowsPerPage={rowsPerPage}
+                  onRowsPerPageChange={handleChangeRowsPerPage}
+                  rowsPerPageOptions={[10, 25, 50]}
+                />
+              </>
             ) : (
               <>
+                <TableContainer>
                 <Table size="small">
                   <TableHead>
                     <TableRow>
@@ -453,6 +540,7 @@ export default function Reports() {
                     )}
                   </TableBody>
                 </Table>
+                </TableContainer>
 
                 <TablePagination
                   component="div"

@@ -6,6 +6,7 @@ import {
   CardContent,
   Typography,
   Table,
+  TableContainer,
   TableHead,
   TableRow,
   TableCell,
@@ -105,6 +106,7 @@ export default function ChildDetails() {
             Visits &amp; Measurements
           </Typography>
 
+          <TableContainer>
           <Table size="small">
             <TableHead>
               <TableRow>
@@ -150,6 +152,7 @@ export default function ChildDetails() {
               ) : null}
             </TableBody>
           </Table>
+          </TableContainer>
         </CardContent>
       </Card>
     </Box>

@@ -61,7 +61,7 @@ export default function Alerts() {
 
   const subtitleFor = (a) => {
     if (a.type === "STOCKOUT_RISK")
-      return `On hand: ${a.onHandSachets} sachets • Avg/day: ${a.avgDailyDispense}`;
+      return `On hand: ${a.onHandSachets} ${(data.unit?.plural || "Sachets").toLowerCase()} • Avg/day: ${a.avgDailyDispense}`;
     if (a.type === "EXPIRY_RISK")
       return `Expires: ${a.expiryDate ? String(a.expiryDate).slice(0, 10) : "-"} • Location: ${
         a.location?.name || "-"

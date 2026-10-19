@@ -17,11 +17,22 @@ import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import { DataGrid } from "@mui/x-data-grid";
 import { api } from "../api/client";
 
+// Compact, unambiguous date-time ("25 Feb 2026, 15:24") so it fits its column;
+// toLocaleString() was long, locale-dependent and got cut off.
+const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
 function formatDate(value) {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString();
+  return dateTimeFormat.format(d);
 }
 
 function toDateOnly(value) {
@@ -62,12 +73,20 @@ export default function Manifests() {
         setLoading(true);
         setError("");
 
-        const res = await api.get("/api/shipments?status=RECEIVED");
-
-        const payload = res?.data;
-        const shipments = Array.isArray(payload)
-          ? payload
-          : payload?.items || payload?.shipments || payload?.data || [];
+        // The API pages results (max 500 per request); fetch every page so older
+        // manifests are not silently missing. Capped as a safety net.
+        const PAGE_SIZE = 500;
+        const MAX_ROWS = 20000;
+        const shipments = [];
+        for (let skip = 0; skip < MAX_ROWS; skip += PAGE_SIZE) {
+          const res = await api.get(`/api/shipments?status=RECEIVED&take=${PAGE_SIZE}&skip=${skip}`);
+          const payload = res?.data;
+          const page = Array.isArray(payload)
+            ? payload
+            : payload?.items || payload?.shipments || payload?.data || [];
+          shipments.push(...page);
+          if (page.length < PAGE_SIZE) break;
+        }
 
         const normalized = shipments.map((item, index) => ({
           id: item.id || item.shipmentId || item.manifestId || index + 1,
@@ -117,8 +136,7 @@ export default function Manifests() {
             "Failed to load received manifests."
         );
       } finally {
-        if (!mounted) return;
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     }
 
@@ -170,6 +188,9 @@ export default function Manifests() {
   };
 
   const handlePrintPdf = useCallback(async (row) => {
+    // Open the tab synchronously in the click handler: browsers block
+    // window.open calls made after an await as popups.
+    const win = window.open("", "_blank");
     try {
       setError("");
 
@@ -180,8 +201,8 @@ export default function Manifests() {
       const blob = new Blob([response.data], { type: "application/pdf" });
       const blobUrl = window.URL.createObjectURL(blob);
 
-      const win = window.open(blobUrl, "_blank", "noopener,noreferrer");
       if (win) {
+        win.location.href = blobUrl;
         win.focus();
       }
 
@@ -189,6 +210,7 @@ export default function Manifests() {
         window.URL.revokeObjectURL(blobUrl);
       }, 60000);
     } catch (err) {
+      if (win) win.close();
       setError(
         err?.response?.data?.message || "Failed to open the manifest PDF."
       );

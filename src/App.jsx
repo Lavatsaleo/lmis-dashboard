@@ -12,6 +12,20 @@ import Users from "./pages/Users";
 import AddUser from "./pages/AddUser";
 import Manifests from "./pages/Manifests";
 import Reports from "./pages/Reports";
+import InventoryIntelligence from "./pages/InventoryIntelligence";
+import SupplyConfiguration from "./pages/SupplyConfiguration";
+import AuditLog from "./pages/AuditLog";
+import Warehouses from "./pages/Warehouses";
+import WarehouseDetail from "./pages/WarehouseDetail";
+import PurchaseOrders from "./pages/PurchaseOrders";
+import PurchaseOrderEditor from "./pages/PurchaseOrderEditor";
+import PurchaseOrderDetail from "./pages/PurchaseOrderDetail";
+import WarehouseReports from "./pages/WarehouseReports";
+import StockAdjustments from "./pages/StockAdjustments";
+import QrLabels from "./pages/QrLabels";
+import StockCountSheet, { StockCountList } from "./pages/StockCounts";
+import ChangePassword from "./pages/ChangePassword";
+import Dhis2Integration from "./pages/Dhis2Integration";
 import { clearSessionAndRedirect } from "./api/client";
 
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -112,6 +126,19 @@ export default function App() {
         <Route path="/" element={<Navigate to="/overview" replace />} />
         <Route path="/overview" element={<Overview />} />
         <Route path="/facility-store" element={<FacilityStore />} />
+        <Route path="/inventory" element={<InventoryIntelligence />} />
+        <Route path="/warehouses" element={<Warehouses />} />
+        <Route path="/warehouses/:warehouseId" element={<WarehouseDetail />} />
+        <Route path="/purchase-orders" element={<PurchaseOrders />} />
+        <Route path="/purchase-orders/new" element={<PurchaseOrderEditor />} />
+        <Route path="/purchase-orders/:poId" element={<PurchaseOrderDetail />} />
+        <Route path="/purchase-orders/:poId/edit" element={<PurchaseOrderEditor />} />
+        <Route path="/warehouse-reports" element={<WarehouseReports />} />
+        <Route path="/stock-adjustments" element={<StockAdjustments />} />
+        <Route path="/qr-labels" element={<QrLabels />} />
+        <Route path="/stock-counts" element={<StockCountList />} />
+        <Route path="/stock-counts/:countId" element={<StockCountSheet />} />
+        <Route path="/supply-configuration" element={<SupplyConfiguration />} />
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/children" element={<Children />} />
         <Route path="/children/:childId" element={<ChildDetails />} />
@@ -121,6 +148,9 @@ export default function App() {
 
         <Route path="/users" element={<Users />} />
         <Route path="/users/new" element={<AddUser />} />
+        <Route path="/audit-log" element={<AuditLog />} />
+        <Route path="/dhis2" element={<Dhis2Integration />} />
+        <Route path="/account/password" element={<ChangePassword />} />
 
         <Route path="*" element={<Navigate to="/overview" replace />} />
       </Route>

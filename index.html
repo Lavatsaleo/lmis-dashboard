@@ -2,9 +2,31 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/acf-logo.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>lmis-dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Anchor</title>
+    <meta name="description" content="Anchor — logistics and nutrition programme management by Action Against Hunger." />
+    <meta name="theme-color" content="#0098B4" />
+
+    <!-- Paths are relative so they resolve under the /lmis/ base. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./favicon-192.png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+
+    <!-- Montserrat (the Anchor wordmark's typeface) for headings, Inter for UI text. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+      <style>
+      /* Printing a report: only the report, full width. */
+      @media print {
+        .no-print, .MuiDrawer-root, .MuiAppBar-root, nav { display: none !important; }
+        main { width: 100% !important; padding: 0 !important; }
+        body { background: #fff !important; }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

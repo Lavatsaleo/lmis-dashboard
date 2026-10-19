@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { useOutletContext } from "react-router-dom";
 import { api } from "../api/client";
 import {
   Box,
@@ -29,12 +30,14 @@ function fmt(n) {
 
 function Kpi({ title, value }) {
   return (
+    // Label on top, number pinned to the bottom so tiles in a row line up even
+    // when a label wraps.
     <Card sx={{ overflow: "hidden", borderRadius: 4, height: "100%" }}>
-      <CardContent sx={{ py: 2.4 }}>
+      <CardContent sx={{ height: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 1 }}>
         <Typography variant="body2" color="text.secondary">
           {title}
         </Typography>
-        <Typography variant="h4" sx={{ mt: 0.8, fontWeight: 900, lineHeight: 1.1 }}>
+        <Typography variant="h4" sx={{ fontWeight: 800, lineHeight: 1.1 }}>
           {fmt(value)}
         </Typography>
       </CardContent>
@@ -43,6 +46,11 @@ function Kpi({ title, value }) {
 }
 
 export default function Overview() {
+  const { me } = useOutletContext() || {};
+  // Same rule as the menu: no implementation (legacy) means all modules.
+  const platform = me?.platformContext;
+  const clinicalEnabled =
+    !platform?.implementation?.id || (platform.enabledModules || []).includes("CLINICAL");
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
@@ -119,6 +127,8 @@ export default function Overview() {
         ? data.kpis?.sachetsInFacilities || 0
         : data.kpis?.sachetsInWarehouse || 0,
       sachetsDispensed: data.kpis?.sachetsDispensed || 0,
+      // Base unit of the products in scope (e.g. "Sachets"), from the API.
+      units: data.unit?.plural || "Sachets",
       childrenEnrolled: data.kpis?.childrenEnrolled || 0,
       transitShown: data.transitTo || [],
       stockoutRiskShown: data.stockoutRisk || [],
@@ -170,12 +180,11 @@ export default function Overview() {
       <Box
         sx={{
           display: "grid",
-          gap: 2,
+          gap: { xs: 1.5, sm: 2 },
           gridTemplateColumns: {
-            xs: "1fr",
-            sm: "repeat(2, 1fr)",
+            xs: "repeat(2, minmax(0, 1fr))",
             md: "repeat(3, 1fr)",
-            xl: "repeat(6, 1fr)",
+            xl: clinicalEnabled ? "repeat(6, 1fr)" : "repeat(5, 1fr)",
           },
         }}
       >
@@ -192,20 +201,20 @@ export default function Overview() {
         <Kpi
           title={
             computed.selectedFacility
-              ? `Sachets in ${computed.selectedFacility.name}`
-              : "Sachets in Warehouse"
+              ? `${computed.units} in ${computed.selectedFacility.name}`
+              : `${computed.units} in Warehouse`
           }
           value={computed.sachetsShown}
         />
         <Kpi
           title={
             computed.selectedFacility
-              ? `Sachets Dispensed (${computed.selectedFacility.name})`
-              : "Sachets Dispensed"
+              ? `${computed.units} Dispensed (${computed.selectedFacility.name})`
+              : `${computed.units} Dispensed`
           }
           value={computed.sachetsDispensed}
         />
-        <Kpi title="Children Enrolled" value={computed.childrenEnrolled} />
+        {clinicalEnabled ? <Kpi title="Children Enrolled" value={computed.childrenEnrolled} /> : null}
       </Box>
 
       <Card sx={{ overflow: "hidden", borderRadius: 4 }}>

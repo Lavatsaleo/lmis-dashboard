@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Link as RouterLink } from "react-router-dom";
+import { Link as RouterLink, useOutletContext } from "react-router-dom";
 import { api } from "../api/client";
 import {
   Alert,
@@ -20,6 +20,7 @@ import {
   Select,
   Stack,
   Table,
+  TableContainer,
   TableBody,
   TableCell,
   TableHead,
@@ -146,6 +147,9 @@ function ChildSummaryCard({ title, child, fallbackFacility }) {
 }
 
 export default function DuplicateCases() {
+  const { me } = useOutletContext() || {};
+  // VIEWER is read-only: the backend rejects resolutions from viewers.
+  const canResolve = Boolean(me?.role) && me.role !== "VIEWER";
   const [data, setData] = useState({ rows: [], total: 0, take: 10, skip: 0 });
   const [status, setStatus] = useState("OPEN");
   const [q, setQ] = useState("");
@@ -290,6 +294,7 @@ export default function DuplicateCases() {
             <Typography sx={{ mt: 2 }}>Loading...</Typography>
           ) : (
             <>
+              <TableContainer>
               <Table size="small" sx={{ mt: 2 }}>
                 <TableHead>
                   <TableRow>
@@ -352,6 +357,7 @@ export default function DuplicateCases() {
                   ) : null}
                 </TableBody>
               </Table>
+              </TableContainer>
 
               <TablePagination
                 component="div"
@@ -412,6 +418,11 @@ export default function DuplicateCases() {
                   <Typography fontWeight={900} gutterBottom>
                     Resolution
                   </Typography>
+                  {!canResolve ? (
+                    <Typography variant="body2" color="text.secondary">
+                      Your role can view duplicate cases but not resolve them.
+                    </Typography>
+                  ) : (
                   <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
                     <FormControl size="small" sx={{ minWidth: 260 }}>
                       <InputLabel id="resolution-action-label">Action</InputLabel>
@@ -439,6 +450,7 @@ export default function DuplicateCases() {
                       {saving ? "Saving..." : "Save"}
                     </Button>
                   </Stack>
+                  )}
 
                   {selected.resolutionAction ? (
                     <Box sx={{ mt: 1.5 }}>

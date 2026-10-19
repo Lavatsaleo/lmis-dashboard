@@ -6,6 +6,7 @@ import {
   CardContent,
   Typography,
   Table,
+  TableContainer,
   TableHead,
   TableRow,
   TableCell,
@@ -301,6 +302,7 @@ export default function Children() {
           <Typography sx={{ mt: 2 }}>Loading...</Typography>
         ) : (
           <>
+            <TableContainer>
             <Table size="small" sx={{ mt: 2 }}>
               <TableHead>
                 <TableRow>
@@ -344,6 +346,7 @@ export default function Children() {
                 )}
               </TableBody>
             </Table>
+            </TableContainer>
 
             <TablePagination
               component="div"
