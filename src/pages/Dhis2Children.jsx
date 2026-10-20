@@ -225,8 +225,28 @@ function ChildDrawer({ id, onClose }) {
 export default function Dhis2Children() {
   const { me } = useOutletContext() || {};
   const scope = useCountryScope(me);
-  const scopeImpl = scope.implementationId;
-  const scopeReady = scope.ready;
+  // Super Admin: which countries have DHIS2 programs, so the page opens on one
+  // that does (their own default, Kenya, has none). The choice here is local to
+  // this page and does not change the country on the stock pages.
+  const [allPrograms, setAllPrograms] = useState(null);
+  const [picked, setPicked] = useState("");
+  useEffect(() => {
+    if (!scope.isSuperAdmin) return undefined;
+    let alive = true;
+    api
+      .get("/api/dhis2-children/programs")
+      .then((r) => alive && setAllPrograms(r.data || []))
+      .catch(() => alive && setAllPrograms([]));
+    return () => {
+      alive = false;
+    };
+  }, [scope.isSuperAdmin]);
+  const ownImpl = me?.platformContext?.implementation?.id || "";
+  const withPrograms = [...new Set((allPrograms || []).map((p) => p.implementationId))];
+  const defaultImpl = withPrograms.includes(ownImpl) ? ownImpl : withPrograms[0] || ownImpl;
+  const selectedCountry = picked || defaultImpl;
+  const scopeImpl = scope.isSuperAdmin && selectedCountry !== "ALL" ? selectedCountry : "";
+  const scopeReady = scope.isSuperAdmin ? allPrograms !== null && scope.implementations.length > 0 : true;
   const implParams = useMemo(() => (scopeImpl ? { implementationId: scopeImpl } : {}), [scopeImpl]);
 
   const [programs, setPrograms] = useState({ key: null, rows: [] });
@@ -327,16 +347,39 @@ export default function Dhis2Children() {
     setPage(0);
   };
 
-  if (scopeReady && programs.key !== null && !programRows.length) {
+  const noProgram = scopeReady && programs.key === (scopeImpl || "ALL") && !programRows.length;
+  const countrySelect = (
+    <CountryScopeSelect
+      scope={{
+        ...scope,
+        value: selectedCountry,
+        setValue: (v) => {
+          setSite(null);
+          setProgramId("");
+          setStatus("");
+          setPage(0);
+          setPicked(v);
+        },
+      }}
+    />
+  );
+
+  if (noProgram) {
     return (
       <Card>
         <CardContent>
-          <Typography variant="h5" fontWeight={900}>
-            Children (DHIS2)
-          </Typography>
-          <Typography color="text.secondary" sx={{ mt: 1 }}>
-            No DHIS2 program is set up for this country yet. An administrator adds one on the DHIS2 Integration page.
-          </Typography>
+          <Stack direction={{ xs: "column", md: "row" }} spacing={2} justifyContent="space-between" alignItems={{ xs: "stretch", md: "center" }}>
+            <Box>
+              <Typography variant="h5" fontWeight={900}>
+                Children (DHIS2)
+              </Typography>
+              <Typography color="text.secondary" sx={{ mt: 1 }}>
+                No DHIS2 program is set up for this country yet.
+                {scope.isSuperAdmin ? " Choose another country, or add a program on the DHIS2 Integration page." : " Ask a Super Admin to add one."}
+              </Typography>
+            </Box>
+            {countrySelect}
+          </Stack>
         </CardContent>
       </Card>
     );
@@ -357,17 +400,7 @@ export default function Dhis2Children() {
               </Typography>
             </Box>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-              <CountryScopeSelect
-                scope={{
-                  ...scope,
-                  setValue: (v) => {
-                    setSite(null);
-                    setProgramId("");
-                    setPage(0);
-                    scope.setValue(v);
-                  },
-                }}
-              />
+              {countrySelect}
               <FormControl size="small" sx={{ minWidth: 200 }}>
                 <InputLabel>Program</InputLabel>
                 <Select

@@ -371,7 +371,7 @@ function TrackerProgramsCard({ params, programs, configured, onNotice }) {
 
 export default function Dhis2Integration() {
   const { me } = useOutletContext();
-  const isAdmin = me?.role === "SUPER_ADMIN" || me?.role === "COUNTRY_ADMIN";
+  const isAdmin = me?.role === "SUPER_ADMIN";
   const { implementations, implementationId, setImplementationId, isSuperAdmin } = useImplementationChoice(me);
   const params = useMemo(() => (isSuperAdmin && implementationId ? { implementationId } : {}), [isSuperAdmin, implementationId]);
 
@@ -594,7 +594,7 @@ export default function Dhis2Integration() {
           <Typography variant="h6" fontWeight={900}>
             DHIS2 Integration
           </Typography>
-          <Typography color="text.secondary">Only administrators can configure the DHIS2 integration.</Typography>
+          <Typography color="text.secondary">Only a Super Admin can configure the DHIS2 integration.</Typography>
         </CardContent>
       </Card>
     );

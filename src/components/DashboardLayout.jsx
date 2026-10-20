@@ -159,8 +159,8 @@ export default function DashboardLayout() {
       }
       admin.push({ label: "Users", to: "/users", icon: <PeopleAltIcon /> });
       admin.push({ label: "Audit Log", to: "/audit-log", icon: <HistoryIcon /> });
-      // DHIS2 carries clinical data where Anchor does not (South Sudan).
-      if (role === "SUPER_ADMIN" || (logisticsVisible && !clinicalVisible)) {
+      // DHIS2 connection and settings: Super Admin only.
+      if (role === "SUPER_ADMIN") {
         admin.push({ label: "DHIS2 Integration", to: "/dhis2", icon: <SyncAltIcon /> });
       }
       groups.push({ label: "Administration", items: admin });
