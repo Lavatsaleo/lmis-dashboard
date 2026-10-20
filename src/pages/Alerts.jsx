@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from "react";
+import { useOutletContext } from "react-router-dom";
 import { api } from "../api/client";
+import { CountryScopeSelect } from "../components/CountryScope";
+import { useCountryScope } from "../components/useCountryScope";
 import {
   Card,
   CardContent,
@@ -13,7 +16,16 @@ import {
 import { alpha } from "@mui/material/styles";
 
 export default function Alerts() {
-  const [data, setData] = useState(null);
+  const { me } = useOutletContext() || {};
+  // Super Admin: one country at a time (default their own), or all combined.
+  const scope = useCountryScope(me);
+  const scopeImpl = scope.implementationId;
+  const scopeReady = scope.ready;
+  // Alerts tagged with the country they were loaded for, so switching country
+  // shows "Loading" until that country's alerts arrive.
+  const [loaded, setLoaded] = useState({ key: null, data: null });
+  const scopeKey = scopeImpl || "ALL";
+  const data = loaded.key === scopeKey ? loaded.data : null;
   const [err, setErr] = useState("");
 
   // ✅ Open waybill using axios (sends Authorization header), then show PDF in new tab
@@ -35,13 +47,14 @@ export default function Alerts() {
   };
 
   useEffect(() => {
+    if (!scopeReady) return;
     api
-      .get(
-        "/api/dashboard/alerts?days=30&stockoutThresholdDays=14&expiryWarnDays=60&transitSlaDays=3"
-      )
-      .then((res) => setData(res.data))
+      .get("/api/dashboard/alerts", {
+        params: { days: 30, stockoutThresholdDays: 14, expiryWarnDays: 60, transitSlaDays: 3, ...(scopeImpl ? { implementationId: scopeImpl } : {}) },
+      })
+      .then((res) => setLoaded({ key: scopeImpl || "ALL", data: res.data }))
       .catch((e) => setErr(e?.response?.data?.message || e.message));
-  }, []);
+  }, [scopeImpl, scopeReady]);
 
   if (err) return <Typography color="error">Error: {err}</Typography>;
   if (!data) return <Typography>Loading...</Typography>;
@@ -77,8 +90,8 @@ export default function Alerts() {
     <Box sx={{ display: "grid", gap: 2 }}>
       <Card sx={{ overflow: "hidden" }}>
         <CardContent>
-          <Stack direction="row" alignItems="center" justifyContent="space-between">
-            <Box>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ xs: "stretch", sm: "center" }} justifyContent="space-between">
+            <Box sx={{ flexGrow: 1 }}>
               <Typography variant="h6" fontWeight={900}>
                 Alerts
               </Typography>
@@ -86,6 +99,7 @@ export default function Alerts() {
                 Operational risks across stockout, expiry, and delayed transit.
               </Typography>
             </Box>
+            <CountryScopeSelect scope={scope} />
             <Chip
               size="small"
               label={`${data.alerts.length} alert(s)`}

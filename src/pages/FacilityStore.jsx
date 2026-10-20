@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useOutletContext } from "react-router-dom";
 import { api } from "../api/client";
+import { CountryScopeSelect } from "../components/CountryScope";
+import { useCountryScope } from "../components/useCountryScope";
 import dayjs from "dayjs";
 import {
   Box,
@@ -43,6 +46,11 @@ function Kpi({ title, value }) {
 }
 
 export default function FacilityStore() {
+  const { me } = useOutletContext() || {};
+  // Super Admin: list one country's facilities at a time (default their own).
+  const scope = useCountryScope(me);
+  const scopeImpl = scope.implementationId;
+  const scopeReady = scope.ready;
   const [facilities, setFacilities] = useState([]);
   const [facilitiesLoaded, setFacilitiesLoaded] = useState(false);
   const [facilityId, setFacilityId] = useState("");
@@ -56,20 +64,20 @@ export default function FacilityStore() {
   const expiryWarnDays = 60;
   const stockoutThresholdDays = 14;
 
-  // Load facilities
+  // Load facilities (for a Super Admin, those of the chosen country)
   useEffect(() => {
+    if (!scopeReady) return;
     api
-      .get("/api/facilities")
+      .get("/api/facilities", { params: scopeImpl ? { implementationId: scopeImpl } : {} })
       .then((res) => {
         const rows = (res.data || []).filter((f) => f.type === "FACILITY");
         rows.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         setFacilities(rows);
         setFacilitiesLoaded(true);
-        if (rows.length && !facilityId) setFacilityId(rows[0].id);
+        setFacilityId((current) => (rows.some((f) => f.id === current) ? current : rows[0]?.id || ""));
       })
       .catch((e) => setErr(e?.response?.data?.message || e.message));
-    // eslint-disable-next-line
-  }, []);
+  }, [scopeImpl, scopeReady]);
 
   // Load facility store data
   useEffect(() => {
@@ -123,6 +131,8 @@ export default function FacilityStore() {
               </Typography>
             </Box>
 
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+            <CountryScopeSelect scope={scope} />
             <FormControl size="small" sx={{ minWidth: { xs: "100%", sm: 360 } }}>
               <InputLabel>Select Facility</InputLabel>
               <Select
@@ -137,6 +147,7 @@ export default function FacilityStore() {
                 ))}
               </Select>
             </FormControl>
+            </Stack>
           </Stack>
         </CardContent>
       </Card>

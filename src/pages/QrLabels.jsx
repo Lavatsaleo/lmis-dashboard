@@ -38,6 +38,8 @@ import { api } from "../api/client";
 import { dateTime, isoDay } from "../components/warehouse/format";
 import { labelSheetUrl, openAuthenticatedFile } from "../components/warehouse/poApi";
 import { typeLabel } from "../components/supply/hierarchy";
+import { CountryScopeSelect } from "../components/CountryScope";
+import { useCountryScope } from "../components/useCountryScope";
 
 const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
 const isAdmin = (me) => me?.role === "SUPER_ADMIN" || me?.role === "COUNTRY_ADMIN";
@@ -125,6 +127,115 @@ function MobileToolsCard({ implementations, onChanged, me }) {
         <Typography variant="caption" color="text.secondary">
           Phones pick up a change the next time the app is opened with internet.{isAdmin(me) ? "" : " Only administrators can change this."}
         </Typography>
+      </CardContent>
+    </Card>
+  );
+}
+
+const LOCATION_KIND = { CENTRAL_WAREHOUSE: "Main warehouse", FIELD_BASE_WAREHOUSE: "Field base" };
+
+// Reprint QR labels for the boxes now at a warehouse or a site (for example
+// cartons that reached a site without labels). One A3 sheet set per location.
+function LabelsByLocation({ me }) {
+  const scope = useCountryScope(me);
+  const scopeImpl = scope.implementationId;
+  const scopeReady = scope.ready;
+  const [loaded, setLoaded] = useState({ key: null, rows: [], error: "" });
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState("");
+  const [printErr, setPrintErr] = useState("");
+  const key = scopeImpl || "ALL";
+
+  useEffect(() => {
+    if (!scopeReady) return undefined;
+    let mounted = true;
+    api
+      .get("/api/labels/locations", { params: scopeImpl ? { implementationId: scopeImpl } : {} })
+      .then((res) => mounted && setLoaded({ key: scopeImpl || "ALL", rows: res.data?.rows || [], error: "" }))
+      .catch((e) => mounted && setLoaded({ key: scopeImpl || "ALL", rows: [], error: e?.response?.data?.message || e.message }));
+    return () => {
+      mounted = false;
+    };
+  }, [scopeImpl, scopeReady]);
+
+  const loading = loaded.key !== key;
+  const term = q.trim().toLowerCase();
+  const rows = loaded.rows.filter(
+    (r) => !term || [r.name, r.code, r.parent, r.county].some((v) => String(v || "").toLowerCase().includes(term))
+  );
+  const printLocation = async (r) => {
+    setPrintErr("");
+    setBusy(r.id);
+    const m = await openAuthenticatedFile(`/api/labels/locations/${r.id}/print/a3`, "application/pdf");
+    setBusy("");
+    if (m) setPrintErr(m);
+  };
+
+  return (
+    <Card>
+      <CardContent sx={{ display: "grid", gap: 2 }}>
+        <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} justifyContent="space-between" alignItems={{ xs: "stretch", md: "center" }}>
+          <Box>
+            <Typography fontWeight={900}>Reprint labels by location</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Labels for the boxes that are at a warehouse or site now, for cartons that arrived without labels. A3, 80 labels per sheet.
+            </Typography>
+          </Box>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+            <CountryScopeSelect scope={scope} />
+            <TextField size="small" label="Search location" value={q} onChange={(e) => setQ(e.target.value)} />
+          </Stack>
+        </Stack>
+        {loaded.error ? <Alert severity="error">{loaded.error}</Alert> : null}
+        {printErr ? <Alert severity="error">{printErr}</Alert> : null}
+        <TableContainer sx={{ maxHeight: 520 }}>
+          <Table size="small" stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell>Location</TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell>Under</TableCell>
+                <TableCell>County</TableCell>
+                <TableCell>Products</TableCell>
+                <TableCell align="right">Boxes</TableCell>
+                <TableCell align="right" />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.id} hover>
+                  <TableCell>
+                    <Typography variant="body2" fontWeight={700}>
+                      {r.name}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {r.code}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>{LOCATION_KIND[r.stockLocationType] || (r.type === "WAREHOUSE" ? "Warehouse" : "Site")}</TableCell>
+                  <TableCell>{r.parent || "—"}</TableCell>
+                  <TableCell>{r.county || "—"}</TableCell>
+                  <TableCell>{r.products.map((p) => `${p.name} (${p.boxes.toLocaleString()})`).join(", ")}</TableCell>
+                  <TableCell align="right">{r.boxes.toLocaleString()}</TableCell>
+                  <TableCell align="right">
+                    <Button size="small" startIcon={<PrintOutlinedIcon />} disabled={busy === r.id} onClick={() => printLocation(r)}>
+                      Print labels
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {!rows.length ? (
+                <TableRow>
+                  <TableCell colSpan={7}>
+                    <Typography variant="body2" color="text.secondary">
+                      {loading ? "Loading…" : term ? "No location matches." : "No boxes at any location you can print for."}
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </TableContainer>
       </CardContent>
     </Card>
   );
@@ -499,6 +610,8 @@ export default function QrLabels() {
           </TableContainer>
         </CardContent>
       </Card>
+
+      <LabelsByLocation me={me} />
     </Box>
   );
 }

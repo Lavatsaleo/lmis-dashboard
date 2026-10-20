@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useOutletContext } from "react-router-dom";
+import { CountryScopeSelect } from "../components/CountryScope";
+import { useCountryScope } from "../components/useCountryScope";
 import { api } from "../api/client";
 import {
   Box,
@@ -57,6 +59,10 @@ export default function Overview() {
 
   const [facilities, setFacilities] = useState([]);
   const [selectedFacilityId, setSelectedFacilityId] = useState("");
+  // Super Admin: one country at a time (default their own), or all combined.
+  const scope = useCountryScope(me);
+  const scopeImpl = scope.implementationId;
+  const scopeReady = scope.ready;
 
   const openWaybill = async (waybillUrl) => {
     const win = window.open("", "_blank");
@@ -86,6 +92,7 @@ export default function Overview() {
       if (selectedFacilityId) {
         params.set("facilityId", selectedFacilityId);
       }
+      if (scopeImpl) params.set("implementationId", scopeImpl);
 
       const res = await api.get(`/api/dashboard/overview?${params.toString()}`);
       setData(res.data);
@@ -94,22 +101,23 @@ export default function Overview() {
     } finally {
       setLoading(false);
     }
-  }, [selectedFacilityId]);
+  }, [selectedFacilityId, scopeImpl]);
 
   useEffect(() => {
-    loadOverview();
-  }, [loadOverview]);
+    if (scopeReady) loadOverview();
+  }, [loadOverview, scopeReady]);
 
   useEffect(() => {
+    if (!scopeReady) return;
     api
-      .get("/api/facilities")
+      .get("/api/facilities", { params: scopeImpl ? { implementationId: scopeImpl } : {} })
       .then((res) => {
         const rows = (res.data || []).filter((f) => f.type === "FACILITY");
         rows.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         setFacilities(rows);
       })
       .catch(() => setFacilities([]));
-  }, []);
+  }, [scopeImpl, scopeReady]);
 
   const computed = useMemo(() => {
     if (!data) return null;
@@ -158,11 +166,21 @@ export default function Overview() {
               </Typography>
             </Box>
 
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", sm: 360 } }}>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ minWidth: { sm: 360 } }}>
+            <CountryScopeSelect
+              scope={{
+                ...scope,
+                setValue: (v) => {
+                  setSelectedFacilityId("");
+                  scope.setValue(v);
+                },
+              }}
+            />
+            <FormControl size="small" sx={{ minWidth: { xs: "100%", sm: 300 } }}>
               <InputLabel>Filter by Facility</InputLabel>
               <Select
                 label="Filter by Facility"
-                value={selectedFacilityId}
+                value={facilities.some((f) => f.id === selectedFacilityId) ? selectedFacilityId : ""}
                 onChange={(e) => setSelectedFacilityId(e.target.value)}
               >
                 <MenuItem value="">All Facilities</MenuItem>
@@ -173,6 +191,7 @@ export default function Overview() {
                 ))}
               </Select>
             </FormControl>
+            </Stack>
           </Stack>
         </CardContent>
       </Card>
