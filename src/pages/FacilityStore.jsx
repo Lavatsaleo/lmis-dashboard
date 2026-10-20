@@ -22,6 +22,9 @@ import {
   TableBody,
   Divider,
   TableContainer,
+  TextField,
+  Tooltip,
+  Button,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 
@@ -45,6 +48,127 @@ function Kpi({ title, value }) {
   );
 }
 
+const SOURCE_NOTE = {
+  CLINICAL: "Sachets given at clinical visits recorded in Anchor.",
+  DHIS2: "Sachets reported at visits in DHIS2 (synced to Anchor).",
+  BOTH: "Clinical visits recorded in Anchor and visits reported in DHIS2.",
+};
+const shortDay = (d) => dayjs(d).format("ddd D MMM");
+
+/** How much this facility has dispensed: fixed periods, any date range, and day by day. */
+function DispensedCard({ dispensed, units, days, range, setRange }) {
+  const [draft, setDraft] = useState(range);
+  const d = dispensed || {};
+  const unit = units.toLowerCase();
+  const max = Math.max(1, ...(d.byDay || []).map((x) => x.sachets));
+  const recentDays = [...(d.byDay || [])].filter((x) => x.sachets > 0).reverse();
+  const periods = [
+    ["Today", d.today],
+    ["Yesterday", d.yesterday],
+    ["Last 7 days", d.last7Days],
+    [`Last ${days} days`, d.lastWindow],
+    [d.firstDay ? `Since ${dayjs(d.firstDay).format("D MMM YYYY")}` : "All time", d.allTime],
+  ];
+  return (
+    <Card sx={{ overflow: "hidden" }}>
+      <CardContent sx={{ display: "grid", gap: 2 }}>
+        <Box>
+          <Typography variant="h6" fontWeight={900}>
+            {units} dispensed at this facility
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {d.source ? SOURCE_NOTE[d.source] : `No ${unit} dispensed here yet.`} Days are counted in East Africa time.
+          </Typography>
+        </Box>
+
+        <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "repeat(2, minmax(0,1fr))", md: "repeat(5, 1fr)" } }}>
+          {periods.map(([label, value]) => (
+            <Box key={label} sx={{ p: 1.5, borderRadius: 2, bgcolor: (t) => alpha(t.palette.primary.main, 0.06) }}>
+              <Typography variant="caption" color="text.secondary" fontWeight={700}>
+                {label}
+              </Typography>
+              <Typography variant="h5" fontWeight={900}>
+                {fmt(value)}
+              </Typography>
+            </Box>
+          ))}
+        </Box>
+
+        {d.notInStock > 0 ? (
+          <Typography variant="body2" color="warning.main">
+            {fmt(d.notInStock)} of these {unit} were reported but were not in this facility&apos;s stock in Anchor; they are taken off when stock arrives.
+          </Typography>
+        ) : null}
+
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ xs: "stretch", sm: "center" }}>
+          <Typography variant="body2" fontWeight={800} sx={{ minWidth: 130 }}>
+            Any period
+          </Typography>
+          <TextField size="small" type="date" label="From" value={draft.from} onChange={(e) => setDraft({ ...draft, from: e.target.value })} InputLabelProps={{ shrink: true }} />
+          <TextField size="small" type="date" label="To" value={draft.to} onChange={(e) => setDraft({ ...draft, to: e.target.value })} InputLabelProps={{ shrink: true }} />
+          <Button variant="outlined" disabled={!draft.from && !draft.to} onClick={() => setRange(draft)}>
+            Show total
+          </Button>
+          {d.range ? (
+            <Typography variant="body1">
+              <b>{fmt(d.range.sachets)}</b> {unit}
+              {d.range.from ? ` from ${dayjs(d.range.from).format("D MMM YYYY")}` : ""}
+              {d.range.to ? ` to ${dayjs(d.range.to).format("D MMM YYYY")}` : ""}
+            </Typography>
+          ) : null}
+        </Stack>
+
+        <Box>
+          <Typography variant="body2" fontWeight={800} sx={{ mb: 1 }}>
+            Day by day, last {days} days
+          </Typography>
+          <Box sx={{ display: "flex", alignItems: "flex-end", gap: "3px", height: 90, borderBottom: 1, borderColor: "divider" }}>
+            {(d.byDay || []).map((x) => (
+              <Tooltip key={x.day} title={`${shortDay(x.day)}: ${fmt(x.sachets)} ${unit}`} arrow>
+                <Box
+                  sx={{
+                    flex: 1,
+                    minWidth: 3,
+                    height: x.sachets ? `${Math.max(6, (x.sachets / max) * 100)}%` : "2px",
+                    bgcolor: x.sachets ? "primary.main" : "divider",
+                    borderRadius: "3px 3px 0 0",
+                  }}
+                />
+              </Tooltip>
+            ))}
+          </Box>
+          {recentDays.length ? (
+            <TableContainer sx={{ maxHeight: 240, mt: 1.5 }}>
+              <Table size="small" stickyHeader>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Day</TableCell>
+                    <TableCell align="right">{units} dispensed</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {recentDays.map((x) => (
+                    <TableRow key={x.day} hover>
+                      <TableCell>{shortDay(x.day)}</TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 800 }}>
+                        {fmt(x.sachets)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          ) : (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Nothing dispensed in the last {days} days.
+            </Typography>
+          )}
+        </Box>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function FacilityStore() {
   const { me } = useOutletContext() || {};
   // Super Admin: list one country's facilities at a time (default their own).
@@ -56,7 +180,10 @@ export default function FacilityStore() {
   const [facilityId, setFacilityId] = useState("");
   // Store data tagged with the facility it belongs to, so switching facility
   // shows "loading" until that facility's data arrives.
-  const [store, setStore] = useState({ facilityId: null, data: null });
+  const [store, setStore] = useState({ key: null, data: null });
+  // Optional date range for the dispensed total (yyyy-mm-dd).
+  const [range, setRange] = useState({ from: "", to: "" });
+  const storeKey = `${facilityId}|${range.from}|${range.to}`;
   const [err, setErr] = useState("");
 
   // settings (can be made UI controls later)
@@ -83,18 +210,21 @@ export default function FacilityStore() {
   useEffect(() => {
     if (!facilityId) return;
 
+    const key = `${facilityId}|${range.from}|${range.to}`;
     api
-      .get(
-        `/api/dashboard/facilities/${facilityId}/store?days=${days}&expiryWarnDays=${expiryWarnDays}&stockoutThresholdDays=${stockoutThresholdDays}`
-      )
+      .get(`/api/dashboard/facilities/${facilityId}/store`, {
+        params: { days, expiryWarnDays, stockoutThresholdDays, ...(range.from ? { from: range.from } : {}), ...(range.to ? { to: range.to } : {}) },
+      })
       .then((res) => {
         setErr("");
-        setStore({ facilityId, data: res.data });
+        setStore({ key, data: res.data });
       })
       .catch((e) => setErr(e?.response?.data?.message || e.message));
-  }, [facilityId]);
+  }, [facilityId, range]);
 
-  const data = store.facilityId === facilityId ? store.data : null;
+  // Keep the figures on screen while only the date range changes.
+  const sameFacility = String(store.key || "").split("|")[0] === facilityId;
+  const data = store.key === storeKey || sameFacility ? store.data : null;
   // Base unit of the products in scope (e.g. "Sachets"), from the API.
   const units = data?.unit?.plural || "Sachets";
 
@@ -138,7 +268,10 @@ export default function FacilityStore() {
               <Select
                 label="Select Facility"
                 value={facilityId}
-                onChange={(e) => setFacilityId(e.target.value)}
+                onChange={(e) => {
+                  setRange({ from: "", to: "" });
+                  setFacilityId(e.target.value);
+                }}
               >
                 {facilities.map((f) => (
                   <MenuItem key={f.id} value={f.id}>
@@ -159,14 +292,17 @@ export default function FacilityStore() {
           gap: { xs: 1.5, sm: 2 },
           gridTemplateColumns: {
             xs: "repeat(2, minmax(0, 1fr))",
-            md: "repeat(3, 1fr)",
+            md: "repeat(4, 1fr)",
           },
         }}
       >
         <Kpi title="Boxes on Hand" value={data.kpis.boxesOnHand} />
         <Kpi title={`${units} Remaining`} value={data.kpis.sachetsRemaining} />
+        <Kpi title={`${units} Dispensed (all time)`} value={data.kpis.sachetsDispensed || 0} />
         <Kpi title="Products at Stockout Risk" value={riskCount} />
       </Box>
+
+      <DispensedCard key={facilityId} dispensed={data.dispensed} units={units} days={days} range={range} setRange={setRange} />
 
       {/* By product table */}
       <Card sx={{ overflow: "hidden" }}>
