@@ -102,6 +102,9 @@ export default function DashboardLayout() {
     !implementationConfigured || enabledModules.includes(code);
   const logisticsVisible = moduleEnabled("LOGISTICS") || moduleEnabled("PHARMACY");
   const clinicalVisible = moduleEnabled("CLINICAL");
+  // Children read from DHIS2 tracker programs (South Sudan: OTP, ...).
+  const trackerPrograms = platformContext?.implementation?.trackerPrograms || [];
+  const dhis2ChildrenVisible = role === "SUPER_ADMIN" || trackerPrograms.length > 0;
 
   // Same items and rules as before, grouped for scanning.
   const navGroups = useMemo(() => {
@@ -137,7 +140,13 @@ export default function DashboardLayout() {
           { label: "Children", to: "/children", icon: <ChildCareIcon /> },
           { label: "Duplicate Review", to: "/duplicate-cases", icon: <ContentCopyOutlinedIcon /> },
           { label: "Reports", to: "/reports", icon: <AssessmentIcon /> },
+          ...(dhis2ChildrenVisible ? [{ label: "Children (DHIS2)", to: "/dhis2-children", icon: <ChildCareIcon /> }] : []),
         ],
+      });
+    } else if (dhis2ChildrenVisible) {
+      groups.push({
+        label: "Clinical",
+        items: [{ label: "Children", to: "/dhis2-children", icon: <ChildCareIcon /> }],
       });
     }
 
@@ -158,7 +167,7 @@ export default function DashboardLayout() {
     }
 
     return groups;
-  }, [role, logisticsVisible, clinicalVisible]);
+  }, [role, logisticsVisible, clinicalVisible, dhis2ChildrenVisible]);
 
   const nav = navGroups.flatMap((g) => g.items);
   const isActive = (to) => loc.pathname === to || loc.pathname.startsWith(to + "/");

@@ -87,6 +87,11 @@ function Stat({ label, value, hint, tone }) {
 function runSummary(r) {
   const s = r.stats || {};
   if (r.status === "RUNNING") return "Running…";
+  if (String(r.direction).startsWith("TRACKER:")) {
+    return [`${n(s.children)} children read`, `${n(s.added)} new`, `${n(s.updated)} updated`, `${n(s.visits)} visits`, s.removed ? `${n(s.removed)} removed` : null, s.mode === "full" ? "full read" : null]
+      .filter(Boolean)
+      .join(" · ");
+  }
   if (r.direction === "PUSH" || r.direction === "PUSH_SITE") {
     return [
       s.site,
@@ -169,6 +174,198 @@ function DataElementPicker({ label, value, onChange, disabled }) {
       )}
       renderInput={(params) => <TextField {...params} label={label} placeholder="Search name or paste UID" />}
     />
+  );
+}
+
+// Children from DHIS2 tracker programs (OTP, TSFP, ...): copied read-only
+// into Anchor for the Children page.
+function TrackerProgramsCard({ params, programs, configured, onNotice }) {
+  const [rows, setRows] = useState([]);
+  const [form, setForm] = useState({ programId: "", code: "", commodity: "", startDate: "" });
+  const [busy, setBusy] = useState("");
+  const load = useCallback(() => {
+    api
+      .get("/api/dhis2/tracker-programs", { params })
+      .then((r) => setRows(r.data || []))
+      .catch(() => setRows([]));
+  }, [params]);
+  useEffect(() => {
+    load();
+  }, [load]);
+  // While a sync runs, refresh the counts every few seconds.
+  useEffect(() => {
+    if (!rows.some((r) => r.running)) return undefined;
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [rows, load]);
+
+  const tracker = programs.filter((p) => p.programType === "WITH_REGISTRATION" && !rows.some((r) => r.programId === p.id));
+  const act = async (key, fn, okText) => {
+    setBusy(key);
+    try {
+      const r = await fn();
+      onNotice({ severity: "success", text: okText || r?.data?.message || "Done." });
+      load();
+    } catch (e) {
+      onNotice({ severity: "error", text: errMsg(e) });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <Card>
+      <CardContent sx={{ display: "grid", gap: 2, gridTemplateColumns: "minmax(0, 1fr)" }}>
+        <Box>
+          <Typography fontWeight={900}>4. Children from DHIS2 (tracker programs)</Typography>
+          <Typography variant="body2" color="text.secondary">
+            Children, visits and outcomes are copied read-only into Anchor for the Children page, so support officers can compare them with facility
+            registers. The first sync reads all history from the start date; then only changes, on the same schedule as above.
+          </Typography>
+        </Box>
+        {rows.length ? (
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Program</TableCell>
+                  <TableCell>Commodity</TableCell>
+                  <TableCell>Start date</TableCell>
+                  <TableCell align="right">Children</TableCell>
+                  <TableCell>Last sync</TableCell>
+                  <TableCell>Automatic</TableCell>
+                  <TableCell align="right" />
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {rows.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell>
+                      <Typography variant="body2" fontWeight={800}>
+                        {r.code}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {r.name}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        defaultValue={r.commodity || ""}
+                        placeholder="e.g. RUTF"
+                        sx={{ width: 110 }}
+                        onBlur={(e) => e.target.value !== (r.commodity || "") && act(`c${r.id}`, () => api.patch(`/api/dhis2/tracker-programs/${r.id}`, { commodity: e.target.value }), "Commodity saved.")}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        type="date"
+                        defaultValue={r.startDate ? String(r.startDate).slice(0, 10) : ""}
+                        onBlur={(e) =>
+                          e.target.value !== (r.startDate ? String(r.startDate).slice(0, 10) : "") &&
+                          act(`d${r.id}`, () => api.patch(`/api/dhis2/tracker-programs/${r.id}`, { startDate: e.target.value || null }), "Start date saved; the next sync re-reads all children.")
+                        }
+                      />
+                    </TableCell>
+                    <TableCell align="right">
+                      <Typography variant="body2" fontWeight={800}>
+                        {Number(r.children).toLocaleString()}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {Number(r.inTreatment).toLocaleString()} in treatment
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      {r.running ? (
+                        <Chip size="small" color="info" label="Syncing…" />
+                      ) : r.lastRun ? (
+                        <>
+                          <Chip size="small" color={RUN_COLOR[r.lastRun.status] || "default"} label={r.lastRun.status} />
+                          <Typography variant="caption" color="text.secondary" component="div">
+                            {fmtTime(r.lastRun.startedAt)}
+                            {r.lastRun.stats ? ` · ${n(r.lastRun.stats.added)} new, ${n(r.lastRun.stats.updated)} updated` : ""}
+                          </Typography>
+                          {r.lastRun.error ? (
+                            <Typography variant="caption" color="error.main" component="div">
+                              {r.lastRun.error}
+                            </Typography>
+                          ) : null}
+                        </>
+                      ) : (
+                        <Typography variant="caption" color="text.secondary">
+                          never
+                        </Typography>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Switch checked={r.enabled} onChange={(e) => act(`e${r.id}`, () => api.patch(`/api/dhis2/tracker-programs/${r.id}`, { enabled: e.target.checked }), e.target.checked ? "Automatic sync on." : "Automatic sync off.")} />
+                    </TableCell>
+                    <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
+                      <Button size="small" disabled={!configured || r.running || !!busy} onClick={() => act(`s${r.id}`, () => api.post(`/api/dhis2/tracker-programs/${r.id}/sync`, {}))}>
+                        Sync now
+                      </Button>
+                      <Tooltip title="Read every child again from the start date (after a mapping or start-date change)">
+                        <span>
+                          <Button size="small" disabled={!configured || r.running || !!busy} onClick={() => act(`f${r.id}`, () => api.post(`/api/dhis2/tracker-programs/${r.id}/sync`, { fromStart: true }))}>
+                            Re-read all
+                          </Button>
+                        </span>
+                      </Tooltip>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No tracker program added yet.
+          </Typography>
+        )}
+
+        <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "minmax(0,1fr)", md: "2fr 1fr 1fr 1fr auto" }, alignItems: "center" }}>
+          <FormControl size="small">
+            <InputLabel>Add a tracker program</InputLabel>
+            <Select
+              label="Add a tracker program"
+              value={tracker.some((p) => p.id === form.programId) ? form.programId : ""}
+              onChange={(e) => {
+                const p = tracker.find((x) => x.id === e.target.value);
+                setForm({ ...form, programId: p.id, code: form.code || p.displayName });
+              }}
+              disabled={!configured}
+            >
+              {tracker.map((p) => (
+                <MenuItem key={p.id} value={p.id}>
+                  {p.displayName}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <TextField size="small" label="Short name" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="e.g. OTP" />
+          <TextField size="small" label="Commodity" value={form.commodity} onChange={(e) => setForm({ ...form, commodity: e.target.value })} placeholder="e.g. RUTF" />
+          <TextField size="small" type="date" label="Start date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} InputLabelProps={{ shrink: true }} helperText="Empty = all history" />
+          <Button
+            variant="contained"
+            disabled={!form.programId || !!busy}
+            onClick={() =>
+              act(
+                "add",
+                async () => {
+                  const r = await api.post("/api/dhis2/tracker-programs", { ...params, ...form, enabled: true });
+                  setForm({ programId: "", code: "", commodity: "", startDate: "" });
+                  return r;
+                },
+                "Program added. Press Sync now to read its children."
+              )
+            }
+          >
+            Add
+          </Button>
+        </Box>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -776,6 +973,8 @@ export default function Dhis2Integration() {
         </CardContent>
       </Card>
 
+      <TrackerProgramsCard params={params} programs={programs} configured={!!status?.configured} onNotice={setNotice} />
+
       <Card>
         <CardContent sx={{ display: "grid", gap: 2 }}>
           <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable">
@@ -800,7 +999,7 @@ export default function Dhis2Integration() {
                   {runs.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell sx={{ whiteSpace: "nowrap" }}>{fmtTime(r.startedAt)}</TableCell>
-                      <TableCell>{RUN_LABEL[r.direction] || r.direction}</TableCell>
+                      <TableCell>{RUN_LABEL[r.direction] || (String(r.direction).startsWith("TRACKER:") ? `Children: ${r.direction.slice(8)}` : r.direction)}</TableCell>
                       <TableCell>{r.trigger === "SCHEDULE" ? "Automatic" : r.trigger === "MAPPING" ? "Site linked" : "Manual"}</TableCell>
                       <TableCell>
                         <Chip size="small" color={RUN_COLOR[r.status] || "default"} label={r.status} />
