@@ -40,6 +40,8 @@ import { useCountryScope } from "../components/useCountryScope";
 
 const fmt = (n) => new Intl.NumberFormat().format(Number(n || 0));
 const day = (d) => (d ? dayjs(d).format("D MMM YYYY") : "—");
+const amount = (g) => `${Number(g.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${g.unit}`;
+const givenText = (items) => (items || []).map((g) => `${g.commodity} ${amount(g)}`).join(" · ");
 const num = (v, digits = 1) => (v === null || v === undefined ? "—" : Number(v).toFixed(digits).replace(/\.0+$/, ""));
 
 const STATUS_COLOR = {
@@ -72,6 +74,15 @@ async function downloadCsv(url, params, fallbackName) {
   setTimeout(() => URL.revokeObjectURL(href), 30000);
 }
 
+// Visits that happened first, oldest to newest; appointments not (yet) attended last.
+const isScheduled = (v) => ["SCHEDULE", "OVERDUE", "SKIPPED"].includes(String(v.status || "").toUpperCase()) || !v.occurredAt;
+function sortVisits(visits) {
+  const time = (d) => (d ? new Date(d).getTime() : 0);
+  const done = visits.filter((v) => !isScheduled(v)).sort((a, b) => time(a.occurredAt) - time(b.occurredAt));
+  const later = visits.filter(isScheduled).sort((a, b) => time(a.scheduledAt) - time(b.scheduledAt));
+  return [...done, ...later];
+}
+
 function VisitRow({ v }) {
   const [open, setOpen] = useState(false);
   const scheduled = String(v.status || "").toUpperCase() === "SCHEDULE";
@@ -96,7 +107,22 @@ function VisitRow({ v }) {
         <TableCell align="right">{num(v.muacCm)}</TableCell>
         <TableCell align="right">{num(v.whz, 2)}</TableCell>
         <TableCell>{v.oedema || "—"}</TableCell>
-        <TableCell align="right">{v.sachets ?? "—"}</TableCell>
+        <TableCell sx={{ whiteSpace: "nowrap" }}>
+          {v.commodities?.length ? (
+            <Typography variant="body2" fontWeight={700}>
+              {givenText(v.commodities)}
+            </Typography>
+          ) : v.treatment ? (
+            <Typography variant="body2">{v.treatment}</Typography>
+          ) : (
+            "—"
+          )}
+          {v.treatment && v.commodities?.length && !v.commodities.some((g) => g.commodity === v.treatment) ? (
+            <Typography variant="caption" color="text.secondary" component="div">
+              Treatment: {v.treatment}
+            </Typography>
+          ) : null}
+        </TableCell>
         <TableCell sx={{ whiteSpace: "nowrap" }}>{v.outcome || (v.nextVisitDate ? day(v.nextVisitDate) : "—")}</TableCell>
       </TableRow>
       <TableRow>
@@ -133,7 +159,6 @@ function ChildDrawer({ id, onClose }) {
     };
   }, [id]);
   const c = child.id === id ? child.data : null;
-  const commodity = c?.programConfig?.commodity || "Sachets";
   return (
     <Drawer anchor="right" open={!!id} onClose={onClose} PaperProps={{ sx: { width: { xs: "100%", md: 920 } } }}>
       <Box sx={{ p: 2.5, display: "grid", gap: 2 }}>
@@ -168,7 +193,7 @@ function ChildDrawer({ id, onClose }) {
                 ["Status", c.status],
                 ["Outcome date", day(c.outcomeDate)],
                 ["Visits", fmt(c.visitCount)],
-                [`${commodity} sachets given`, fmt(c.sachetsTotal)],
+                ["Given in total", givenText(c.commodityTotals) || "—"],
               ].map(([k, v]) => (
                 <Box key={k} sx={{ p: 1.25, borderRadius: 2, bgcolor: (t) => alpha(t.palette.primary.main, 0.05) }}>
                   <Typography variant="caption" color="text.secondary" fontWeight={700}>
@@ -198,12 +223,12 @@ function ChildDrawer({ id, onClose }) {
                       <TableCell align="right">MUAC (cm)</TableCell>
                       <TableCell align="right">WHZ</TableCell>
                       <TableCell>Oedema</TableCell>
-                      <TableCell align="right">{commodity}</TableCell>
+                      <TableCell>Given</TableCell>
                       <TableCell>Next visit / outcome</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {c.visits.map((v) => (
+                    {sortVisits(c.visits).map((v) => (
                       <VisitRow key={v.id} v={v} />
                     ))}
                     {!c.visits.length ? (
@@ -328,7 +353,6 @@ export default function Dhis2Children() {
   const data = result.data;
   const loading = result.key !== key;
   const s = data?.summary;
-  const commodity = program?.commodity || "Sachets";
   const outcomeOptions = (s?.outcomes || []).map((o) => o.outcome);
 
   const exportCsv = async (level) => {
@@ -518,13 +542,13 @@ export default function Dhis2Children() {
       {result.error ? <Alert severity="error">{result.error}</Alert> : null}
 
       {s ? (
-        <Box sx={{ display: "grid", gap: { xs: 1.5, sm: 2 }, gridTemplateColumns: { xs: "repeat(2, minmax(0,1fr))", md: "repeat(5, 1fr)" } }}>
+        <Box sx={{ display: "grid", gap: { xs: 1.5, sm: 2 }, gridTemplateColumns: { xs: "repeat(2, minmax(0,1fr))", md: "repeat(auto-fit, minmax(170px, 1fr))" } }}>
           {[
             ["Children", s.children, null],
             ["In treatment", s.inTreatment, "info"],
             ["Missed appointment", s.missed, s.missed ? "warning" : null],
             ["Discharged", s.discharged, null],
-            [`${commodity} sachets given`, s.sachets, null],
+            ...((s.given || []).length ? s.given.map((g) => [`${g.commodity} given (${g.unit})`, g.amount, null]) : [["Given", 0, null]]),
           ].map(([label, value, tone]) => (
             <Card key={label}>
               <CardContent>
@@ -564,7 +588,7 @@ export default function Dhis2Children() {
                 <TableCell>Last visit</TableCell>
                 <TableCell>Next visit</TableCell>
                 <TableCell>Status</TableCell>
-                <TableCell align="right">{commodity}</TableCell>
+                <TableCell>Given</TableCell>
               </TableRow>
             </TableHead>
             <TableBody sx={{ opacity: loading ? 0.5 : 1 }}>
@@ -598,7 +622,14 @@ export default function Dhis2Children() {
                   <TableCell>
                     <Chip size="small" color={STATUS_COLOR[c.status] || "default"} label={c.status} />
                   </TableCell>
-                  <TableCell align="right">{fmt(c.sachetsTotal)}</TableCell>
+                  <TableCell sx={{ whiteSpace: "nowrap" }}>
+                    {(c.commodityTotals || []).map((g) => (
+                      <Typography key={`${g.commodity}${g.unit}`} variant="body2">
+                        {g.commodity} <b>{amount(g)}</b>
+                      </Typography>
+                    ))}
+                    {!(c.commodityTotals || []).length ? "—" : null}
+                  </TableCell>
                 </TableRow>
               ))}
               {data && !data.rows.length ? (
