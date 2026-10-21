@@ -281,6 +281,23 @@ export default function Dhis2Children() {
   const [programId, setProgramId] = useState("");
   const [sites, setSites] = useState([]);
   const [site, setSite] = useState(null);
+  // County filter, remembered on this device so a county team opens on its own county.
+  const [countyPick, setCountyPick] = useState(() => {
+    try {
+      return localStorage.getItem("anchor.dhis2County") || "";
+    } catch {
+      return "";
+    }
+  });
+  const setCounty = (v) => {
+    setCountyPick(v);
+    try {
+      if (v) localStorage.setItem("anchor.dhis2County", v);
+      else localStorage.removeItem("anchor.dhis2County");
+    } catch {
+      /* storage unavailable */
+    }
+  };
   const [status, setStatus] = useState("");
   const [search, setSearch] = useState("");
   const [term, setTerm] = useState("");
@@ -320,6 +337,7 @@ export default function Dhis2Children() {
         const hit = rows.find((x) => x.orgUnitUid === wantedSite);
         if (hit) {
           setSite(hit);
+          setCounty(hit.county || "");
           setWantedSite("");
         }
       }
@@ -328,6 +346,10 @@ export default function Dhis2Children() {
       alive = false;
     };
   }, [pid, implParams, wantedSite]);
+
+  const counties = useMemo(() => [...new Set(sites.map((x) => x.county).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [sites]);
+  const county = counties.includes(countyPick) ? countyPick : "";
+  const siteOptions = county ? sites.filter((x) => x.county === county) : sites;
 
   // Wait until typing stops before searching.
   useEffect(() => {
@@ -342,12 +364,13 @@ export default function Dhis2Children() {
     () => ({
       ...implParams,
       programId: pid,
+      ...(county ? { county } : {}),
       ...(site ? { orgUnit: site.orgUnitUid } : {}),
       ...(status ? { status } : {}),
       ...(term ? { q: term } : {}),
       ...Object.fromEntries(Object.entries(dates).filter(([, v]) => v)),
     }),
-    [implParams, pid, site, status, term, dates]
+    [implParams, pid, county, site, status, term, dates]
   );
   const key = JSON.stringify({ ...filters, page, pageSize });
 
@@ -393,6 +416,7 @@ export default function Dhis2Children() {
         value: selectedCountry,
         setValue: (v) => {
           setSite(null);
+          setCounty("");
           setProgramId("");
           setStatus("");
           setPage(0);
@@ -461,10 +485,32 @@ export default function Dhis2Children() {
             </Stack>
           </Stack>
 
-          <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "minmax(0,1fr)", md: "2fr 1.3fr 1.6fr" } }}>
+          <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "minmax(0,1fr)", md: "1.2fr 2fr 1.3fr 1.6fr" } }}>
+            <FormControl size="small">
+              <InputLabel shrink>County</InputLabel>
+              <Select
+                label="County"
+                notched
+                displayEmpty
+                value={county}
+                renderValue={(v) => (v ? v.replace(/\s+county$/i, "") : "All counties")}
+                onChange={(e) => {
+                  setCounty(e.target.value);
+                  if (site && e.target.value && site.county !== e.target.value) setSite(null);
+                  setPage(0);
+                }}
+              >
+                <MenuItem value="">All counties</MenuItem>
+                {counties.map((c) => (
+                  <MenuItem key={c} value={c}>
+                    {c.replace(/\s+county$/i, "")} · {fmt(sites.filter((x) => x.county === c).reduce((n, x) => n + x.children, 0))} children
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <Autocomplete
               size="small"
-              options={sites}
+              options={siteOptions}
               value={site}
               onChange={(_, v) => resetPage(setSite)(v)}
               groupBy={(o) => o.county || "Other"}
@@ -490,7 +536,7 @@ export default function Dhis2Children() {
                   </li>
                 );
               }}
-              renderInput={(params) => <TextField {...params} label={`Site (${sites.length})`} placeholder="All sites — type to search" />}
+              renderInput={(params) => <TextField {...params} label={`Site (${siteOptions.length})`} placeholder="All sites — type to search" />}
             />
             <FormControl size="small">
               <InputLabel>Status</InputLabel>
@@ -528,10 +574,11 @@ export default function Dhis2Children() {
                 InputLabelProps={{ shrink: true }}
               />
             ))}
-            {Object.values(dates).some(Boolean) || site || status || search ? (
+            {Object.values(dates).some(Boolean) || county || site || status || search ? (
               <Button
                 onClick={() => {
                   setDates({ enrolledFrom: "", enrolledTo: "", visitFrom: "", visitTo: "" });
+                  setCounty("");
                   setSite(null);
                   setStatus("");
                   setSearch("");

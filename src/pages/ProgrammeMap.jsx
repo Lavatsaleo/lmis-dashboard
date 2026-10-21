@@ -36,8 +36,7 @@ import CenterFocusStrongOutlinedIcon from "@mui/icons-material/CenterFocusStrong
 import ChildCareIcon from "@mui/icons-material/ChildCare";
 
 import { api } from "../api/client";
-import { CountryScopeSelect } from "../components/CountryScope";
-import { useCountryScope } from "../components/useCountryScope";
+import { useImplementationChoice } from "../components/implementationChoice";
 
 // --------------------------------------------------------------------------
 // Measures, colours and helpers
@@ -46,6 +45,51 @@ const SSD_BOUNDS = [
   [3.4, 23.4],
   [12.3, 36.0],
 ];
+const ISIOLO_BOUNDS = [
+  [-0.1, 36.85],
+  [2.1, 39.5],
+];
+
+// One map per country: where its figures come from, its boundary files and
+// what its areas are called. South Sudan reads the DHIS2 programmes; Kenya the
+// children registered in Anchor (Isiolo County only, shown by sub-county).
+const MAPS = {
+  SS: {
+    endpoint: "/api/dhis2-children/map",
+    outer: "ssd-states",
+    areas: "ssd-counties",
+    area: "County",
+    areaPlural: "Counties",
+    subtitle: "Workload and results per site, county and state, from DHIS2 programme records. Click a county to zoom in, a site for its details.",
+    outerStyle: () => ({ color: "#2F4450", weight: 2.2, fill: false }),
+    bounds: SSD_BOUNDS,
+    footer: "Figures come from the DHIS2 programme records copied into Anchor (updated hourly).",
+    attribution: "Boundaries: OCHA / NBS South Sudan (2020) via geoBoundaries, CC BY 3.0 IGO",
+    childrenLink: (s, implId) => `/dhis2-children?${new URLSearchParams({ site: s.key, ...(implId ? { country: implId } : {}) }).toString()}`,
+    words: {},
+  },
+  KE: {
+    endpoint: "/api/dashboard/programme-map",
+    // Isiolo's wards (faint lines) and its three sub-counties (joined from the wards).
+    outer: "ken-isiolo-wards",
+    areas: "ken-isiolo-subcounties",
+    area: "Sub-county",
+    areaPlural: "Sub-counties",
+    subtitle: "Workload and results per site and sub-county in Isiolo County, from the children registered in Anchor. Click a sub-county to zoom in, a site for its details.",
+    outerStyle: () => ({ color: "#8FA0A9", weight: 0.8, dashArray: "3 4", fill: false }),
+    bounds: ISIOLO_BOUNDS,
+    // Facilities carry a GPS position only; their sub-county and ward are the ones the point falls in.
+    placeByMap: true,
+    footer: "Figures come from the children registered in Anchor.",
+    attribution: "Boundaries: wards B. A. Omare & G. Omare (CC BY 4.0) via geoBoundaries; sub-counties joined from the wards",
+    childrenLink: (s) => `/children?facility=${encodeURIComponent(s.key)}`,
+    words: { cureRate: "Recovery rate", cured: "Recovered", defaultRate: "Lost to follow-up rate", defaulted: "Lost" },
+    help: {
+      cureRate: "Discharged having achieved normal anthropometric measurements ÷ all discharges × 100, in the period",
+      defaultRate: "Discharged as lost to follow-up ÷ all discharges × 100, in the period",
+    },
+  },
+};
 const TEAL = ["#E3F4F7", "#B7E3EB", "#7FCBDA", "#3EAFC6", "#0098B4", "#007189", "#004B5C"];
 const GOOD = "#1B7F4B";
 const WARN = "#D99A00";
@@ -61,6 +105,25 @@ const MEASURES = {
   defaultRate: { label: "Default rate", kind: "rate", good: (v) => v < 15, bad: (v) => v >= 25, target: "< 15%", help: "Discharged as defaulter ÷ all discharges × 100, in the period" },
   deathRate: { label: "Death rate", kind: "rate", good: (v) => v < 3, bad: (v) => v >= 10, target: "< 10%", help: "Discharged as died ÷ all discharges × 100, in the period" },
 };
+/** Measures with the country's own names for the rates. */
+const measuresFor = (cfg) => Object.fromEntries(Object.entries(MEASURES).map(([k, m]) => [k, { ...m, label: cfg.words[k] || m.label, help: cfg.help?.[k] || m.help }]));
+
+// Point-in-polygon, to place a facility in the area (ward) that contains it.
+const inRing = ([x, y], ring) => {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+};
+const featureAt = (features, lat, lon) =>
+  features.find((f) => {
+    const polys = f.geometry.type === "Polygon" ? [f.geometry.coordinates] : f.geometry.coordinates;
+    return polys.some((p) => inRing([lon, lat], p[0]) && !p.slice(1).some((h) => inRing([lon, lat], h)));
+  }) || null;
+
 const PERIODS = [
   ["30d", "Last 30 days", () => [dayjs().subtract(29, "day"), dayjs()]],
   ["3m", "Last 3 months", () => [dayjs().subtract(3, "month").add(1, "day"), dayjs()]],
@@ -137,7 +200,7 @@ function FitTo({ bounds, boundsKey, token }) {
   return null;
 }
 
-function Legend({ measure, max, commodityLabel }) {
+function Legend({ measure, max, label, areaPlural }) {
   const m = MEASURES[measure];
   return (
     <Box
@@ -157,7 +220,7 @@ function Legend({ measure, max, commodityLabel }) {
       }}
     >
       <Typography variant="caption" fontWeight={800} component="div">
-        {measure === "given" ? commodityLabel : m.label}
+        {label}
       </Typography>
       {m.kind === "rate" ? (
         <Stack spacing={0.4} sx={{ mt: 0.5 }}>
@@ -187,13 +250,13 @@ function Legend({ measure, max, commodityLabel }) {
         </>
       )}
       <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
-        Bubble size = {m.kind === "rate" ? "children discharged" : "the figure"} · shading = counties
+        Bubble size = {m.kind === "rate" ? "children discharged" : "the figure"} · shading = {areaPlural.toLowerCase()}
       </Typography>
     </Box>
   );
 }
 
-function SiteCard({ site, programs, commodity, onOpen }) {
+function SiteCard({ site, programs, commodity, onOpen, M, words }) {
   const t = totalsOf(Object.values(site.programs));
   const rows = programs.filter((p) => site.programs[p.id]);
   return (
@@ -211,8 +274,8 @@ function SiteCard({ site, programs, commodity, onOpen }) {
           ["Admitted", fmt(t.admissions)],
           ["In treatment", fmt(t.inTreatment)],
           ["Missed", fmt(t.missed)],
-          ["Cure rate", pct(t.cureRate)],
-          ["Default rate", pct(t.defaultRate)],
+          [M.cureRate.label, pct(t.cureRate)],
+          [M.defaultRate.label, pct(t.defaultRate)],
           ["Death rate", pct(t.deathRate)],
         ].map(([k, v]) => (
           <Box key={k} sx={{ p: 1, borderRadius: 1.5, bgcolor: (th) => alpha(th.palette.primary.main, 0.06) }}>
@@ -231,8 +294,8 @@ function SiteCard({ site, programs, commodity, onOpen }) {
             <TableCell>Program</TableCell>
             <TableCell align="right">Admitted</TableCell>
             <TableCell align="right" title="In treatment now">Active</TableCell>
-            <TableCell align="right">Cured</TableCell>
-            <TableCell align="right">Default</TableCell>
+            <TableCell align="right">{words.cured || "Cured"}</TableCell>
+            <TableCell align="right">{words.defaulted || "Default"}</TableCell>
             <TableCell align="right">Died</TableCell>
           </TableRow>
         </TableHead>
@@ -283,27 +346,32 @@ function SiteCard({ site, programs, commodity, onOpen }) {
 export default function ProgrammeMap() {
   const { me } = useOutletContext() || {};
   const navigate = useNavigate();
-  const scope = useCountryScope(me);
-
-  // Super Admin: open on a country that has DHIS2 programs (as the Children page).
-  const [allPrograms, setAllPrograms] = useState(null);
-  const [picked, setPicked] = useState("");
-  useEffect(() => {
-    if (!scope.isSuperAdmin) return undefined;
-    let alive = true;
-    api
-      .get("/api/dhis2-children/programs")
-      .then((r) => alive && setAllPrograms(r.data || []))
-      .catch(() => alive && setAllPrograms([]));
-    return () => {
-      alive = false;
-    };
-  }, [scope.isSuperAdmin]);
+  // Countries with a map: South Sudan (DHIS2) and Kenya (Anchor). Only a Super Admin switches.
+  const { implementations } = useImplementationChoice(me);
+  const isSuperAdmin = me?.role === "SUPER_ADMIN";
+  const mapped = implementations.filter((i) => MAPS[i.country?.code]);
+  const [picked, setPickedState] = useState(() => {
+    try {
+      return localStorage.getItem("anchor.mapCountry") || "";
+    } catch {
+      return "";
+    }
+  });
+  const setPicked = (v) => {
+    setPickedState(v);
+    try {
+      localStorage.setItem("anchor.mapCountry", v);
+    } catch {
+      /* storage unavailable */
+    }
+  };
   const ownImpl = me?.platformContext?.implementation?.id || "";
-  const withPrograms = [...new Set((allPrograms || []).map((p) => p.implementationId))];
-  const country = picked || (withPrograms.includes(ownImpl) ? ownImpl : withPrograms[0] || ownImpl);
-  const implId = scope.isSuperAdmin ? country : "";
-  const ready = scope.isSuperAdmin ? allPrograms !== null : true;
+  const impl = mapped.find((i) => i.id === picked) || mapped.find((i) => i.id === ownImpl) || mapped[0] || null;
+  const code = impl?.country?.code || "";
+  const cfg = MAPS[code] || MAPS.SS;
+  const implId = isSuperAdmin && impl ? impl.id : "";
+  const ready = !!impl;
+  const M = useMemo(() => measuresFor(cfg), [cfg]);
 
   const [programIds, setProgramIds] = useState([]);
   const [period, setPeriod] = useState("3m");
@@ -315,34 +383,41 @@ export default function ProgrammeMap() {
   const [streets, setStreets] = useState(false);
   const [tab, setTab] = useState(0);
   const [selected, setSelected] = useState(null);
-  // County filter, remembered on this device so a county team lands on its own county.
-  const [countyFocus, setCountyFocusState] = useState(() => {
+  // Area (county / ward) filter, remembered per country on this device so a county team lands on its own county.
+  const [focusMap, setFocusMap] = useState(() => {
     try {
-      return localStorage.getItem("anchor.mapCounty") || null;
+      return JSON.parse(localStorage.getItem("anchor.mapArea") || "{}") || {};
     } catch {
-      return null;
+      return {};
     }
   });
+  const countyFocus = focusMap[code] || null;
   const setCountyFocus = (k) => {
-    setCountyFocusState(k);
+    const next = { ...focusMap, [code]: k || undefined };
+    setFocusMap(next);
     try {
-      if (k) localStorage.setItem("anchor.mapCounty", k);
-      else localStorage.removeItem("anchor.mapCounty");
+      localStorage.setItem("anchor.mapArea", JSON.stringify(next));
     } catch {
       /* storage unavailable */
     }
   };
   const [fitToken, setFitToken] = useState(0);
-  const [geo, setGeo] = useState({ states: null, counties: null });
+  const [geoState, setGeo] = useState({ code: null, states: null, counties: null });
   const [result, setResult] = useState({ key: null, data: null, error: "" });
 
   // Boundaries (bundled with the dashboard)
   useEffect(() => {
+    if (!code) return undefined;
+    let alive = true;
     const base = import.meta.env.BASE_URL || "/";
-    Promise.all([fetch(`${base}geo/ssd-states.geojson`).then((r) => r.json()), fetch(`${base}geo/ssd-counties.geojson`).then((r) => r.json())])
-      .then(([states, counties]) => setGeo({ states, counties }))
-      .catch(() => setGeo({ states: null, counties: null }));
-  }, []);
+    Promise.all([fetch(`${base}geo/${cfg.outer}.geojson`).then((r) => r.json()), fetch(`${base}geo/${cfg.areas}.geojson`).then((r) => r.json())])
+      .then(([states, counties]) => alive && setGeo({ code, states, counties }))
+      .catch(() => alive && setGeo({ code, states: null, counties: null }));
+    return () => {
+      alive = false;
+    };
+  }, [code, cfg]);
+  const geo = useMemo(() => (geoState.code === code ? geoState : { states: null, counties: null }), [geoState, code]);
 
   const [from, to] = useMemo(() => {
     if (period === "custom") return [custom.from || null, custom.to || null];
@@ -355,19 +430,19 @@ export default function ProgrammeMap() {
     () => ({ ...(implId ? { implementationId: implId } : {}), ...(programIds.length ? { programIds: programIds.join(",") } : {}), ...(from ? { from } : {}), ...(to ? { to } : {}) }),
     [implId, programIds, from, to]
   );
-  const key = JSON.stringify(params);
+  const key = JSON.stringify({ code, ...params });
   useEffect(() => {
     if (!ready) return undefined;
     let alive = true;
-    const k = JSON.stringify(params);
+    const k = JSON.stringify({ code, ...params });
     api
-      .get("/api/dhis2-children/map", { params })
+      .get(cfg.endpoint, { params })
       .then((r) => alive && setResult({ key: k, data: r.data, error: "" }))
       .catch((e) => alive && setResult({ key: k, data: null, error: e?.response?.data?.message || e.message }));
     return () => {
       alive = false;
     };
-  }, [params, ready]);
+  }, [params, ready, code, cfg]);
   const data = result.data;
   const loading = result.key !== key;
   const programs = data?.programs || [];
@@ -381,14 +456,28 @@ export default function ProgrammeMap() {
   const commodityKey = commodities.some(([k]) => k === commodity) ? commodity : commodities[0]?.[0] || "";
   const commodityLabel = commodities.find(([k]) => k === commodityKey)?.[1] || "Commodity given";
 
+  // Kenya: a facility's sub-county and ward are the ones its position falls in.
+  const placed = useMemo(() => {
+    const areas = cfg.placeByMap ? geo.counties?.features : null;
+    const wards = cfg.placeByMap ? geo.states?.features : null;
+    return (s) => {
+      if (!areas || s.latitude === null || s.longitude === null) return s;
+      const f = featureAt(areas, s.latitude, s.longitude);
+      const w = wards ? featureAt(wards, s.latitude, s.longitude) : null;
+      return f ? { ...s, county: f.properties.name, state: f.properties.state || null, payam: w ? `${w.properties.name} ward` : s.payam } : s;
+    };
+  }, [cfg, geo.counties, geo.states]);
+  const idleSites = useMemo(() => (data?.idleSites || []).map(placed), [data, placed]);
+
   // Per site figures for the chosen measure
   const sites = useMemo(
     () =>
-      (data?.sites || []).map((s) => {
+      (data?.sites || []).map((raw) => {
+        const s = placed(raw);
         const t = totalsOf(Object.values(s.programs));
         return { ...s, t, value: valueOf(t, measure, s.given, commodityKey) };
       }),
-    [data, measure, commodityKey]
+    [data, measure, commodityKey, placed]
   );
   const located = sites.filter((s) => s.latitude !== null && s.longitude !== null);
   const isRate = MEASURES[measure].kind === "rate";
@@ -422,9 +511,11 @@ export default function ProgrammeMap() {
     if (!geo.counties) return [];
     const keys = new Set(counties.map((c) => c.key));
     return geo.counties.features
-      .filter((f) => keys.has(countyKey(f.properties.name)))
-      .map((f) => ({ key: f.properties.id || f.properties.name, name: f.properties.name, center: L.geoJSON(f).getBounds().getCenter() }));
-  }, [geo.counties, counties]);
+      // Kenya: also name the larger wards without records, for orientation.
+      .map((f) => ({ f, b: L.geoJSON(f).getBounds() }))
+      .filter(({ f, b }) => keys.has(countyKey(f.properties.name)) || (cfg.placeByMap && b.getNorth() - b.getSouth() > 0.15))
+      .map(({ f, b }) => ({ key: f.properties.id || f.properties.name, name: f.properties.name, center: b.getCenter() }));
+  }, [geo.counties, counties, cfg]);
   const maxCounty = Math.max(1, ...counties.map((c) => (isRate ? 0 : c.value || 0)));
 
   // Country totals
@@ -438,10 +529,12 @@ export default function ProgrammeMap() {
       const f = geo.counties.features.find((x) => countyKey(x.properties.name) === countyFocus);
       if (f) return L.geoJSON(f).getBounds();
     }
-    const pts = [...located, ...(showIdle ? data?.idleSites || [] : [])].filter((s) => s.latitude !== null && s.longitude !== null);
-    if (!pts.length) return SSD_BOUNDS;
+    // Kenya: the whole of Isiolo.
+    if (cfg.placeByMap && geo.counties) return L.geoJSON(geo.counties).getBounds();
+    const pts = [...located, ...(showIdle ? idleSites : [])].filter((s) => s.latitude !== null && s.longitude !== null);
+    if (!pts.length) return cfg.bounds;
     return L.latLngBounds(pts.map((s) => [s.latitude, s.longitude])).pad(0.15);
-  }, [countyFocus, geo.counties, located, showIdle, data]);
+  }, [countyFocus, geo.counties, located, showIdle, idleSites, cfg]);
   const boundsKey = (() => {
     try {
       return bounds.toBBoxString ? bounds.toBBoxString() : JSON.stringify(bounds);
@@ -455,14 +548,14 @@ export default function ProgrammeMap() {
   const countyStyle = (f) => {
     const c = countyByKey.get(countyKey(f.properties.name));
     const focus = countyFocus && countyKey(f.properties.name) === countyFocus;
-    if (!c) return { color: "#A9B6BD", weight: 0.7, fillColor: "#FFFFFF", fillOpacity: streets ? 0.15 : 0.92 };
+    if (!c) return { color: cfg.placeByMap ? "#6F828C" : "#A9B6BD", weight: cfg.placeByMap ? 1 : 0.7, fillColor: "#FFFFFF", fillOpacity: streets ? 0.15 : 0.92 };
     const fill = isRate ? rateColor(measure, c.t[measure]) : scaleColor(c.value, maxCounty) || "#FFFFFF";
     return { color: focus ? "#00495A" : "#5F7480", weight: focus ? 2.5 : 1.1, fillColor: fill, fillOpacity: isRate ? 0.3 : 0.65 };
   };
   const onCounty = (f, layer) => {
     const c = countyByKey.get(countyKey(f.properties.name));
     const html = c
-      ? `<b>${f.properties.name}</b> · ${f.properties.state || ""}<br/>${MEASURES[measure].label}: <b>${isRate ? pct(c.t[measure]) : fmt(c.value, 2)}</b><br/>${c.sites.length} site(s)`
+      ? `<b>${f.properties.name}</b> · ${f.properties.state || ""}<br/>${M[measure].label}: <b>${isRate ? pct(c.t[measure]) : fmt(c.value, 2)}</b><br/>${c.sites.length} site(s)`
       : `<b>${f.properties.name}</b> · ${f.properties.state || ""}<br/>No programme sites`;
     layer.bindTooltip(html, { sticky: true, direction: "top" });
     layer.on("click", () => {
@@ -473,10 +566,7 @@ export default function ProgrammeMap() {
     });
   };
 
-  const openChildren = (s) => {
-    const q = new URLSearchParams({ site: s.key, ...(implId ? { country: implId } : {}) });
-    navigate(`/dhis2-children?${q.toString()}`);
-  };
+  const openChildren = (s) => navigate(cfg.childrenLink(s, implId));
 
   const ranking = inView
     .slice()
@@ -509,25 +599,34 @@ export default function ProgrammeMap() {
                 Programme map
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Workload and results per site, county and state, from DHIS2 programme records. Click a county to zoom in, a site for its details.
+                {cfg.subtitle}
               </Typography>
             </Box>
-            <CountryScopeSelect
-              scope={{
-                ...scope,
-                value: country,
-                setValue: (v) => {
-                  setPicked(v);
-                  setProgramIds([]);
-                  setSelected(null);
-                  setCountyFocus(null);
-                },
-              }}
-            />
+            {isSuperAdmin && mapped.length > 1 ? (
+              <FormControl size="small" sx={{ minWidth: 200 }}>
+                <InputLabel>Country</InputLabel>
+                <Select
+                  label="Country"
+                  value={impl?.id || ""}
+                  onChange={(e) => {
+                    setPicked(e.target.value);
+                    setProgramIds([]);
+                    setSelected(null);
+                    setTab(0);
+                  }}
+                >
+                  {mapped.map((i) => (
+                    <MenuItem key={i.id} value={i.id}>
+                      {i.country?.name || i.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            ) : null}
           </Stack>
 
           <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} useFlexGap flexWrap="wrap" alignItems={{ xs: "stretch", lg: "center" }}>
-            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ display: programs.length > 1 ? "flex" : "none" }}>
               <Chip label="All programs" color={programIds.length ? "default" : "primary"} variant={programIds.length ? "outlined" : "filled"} onClick={() => setProgramIds([])} />
               {programs.map((p) => {
                 const on = programIds.includes(p.id);
@@ -553,9 +652,9 @@ export default function ProgrammeMap() {
               </Select>
             </FormControl>
             <FormControl size="small" sx={{ minWidth: 190 }}>
-              <InputLabel shrink>County</InputLabel>
-              <Select label="County" notched value={countyOptions.some((c) => c.key === countyFocus) ? countyFocus : ""} displayEmpty onChange={(e) => setCountyFocus(e.target.value || null)}>
-                <MenuItem value="">All counties</MenuItem>
+              <InputLabel shrink>{cfg.area}</InputLabel>
+              <Select label={cfg.area} notched value={countyOptions.some((c) => c.key === countyFocus) ? countyFocus : ""} displayEmpty onChange={(e) => setCountyFocus(e.target.value || null)}>
+                <MenuItem value="">{`All ${cfg.areaPlural.toLowerCase()}`}</MenuItem>
                 {countyOptions
                   .slice()
                   .sort((a, b) => String(a.state || "").localeCompare(String(b.state || "")) || a.name.localeCompare(b.name))
@@ -578,7 +677,7 @@ export default function ProgrammeMap() {
             <FormControl size="small" sx={{ minWidth: 200 }}>
               <InputLabel>Show on map</InputLabel>
               <Select label="Show on map" value={measure} onChange={(e) => setMeasure(e.target.value)}>
-                {Object.entries(MEASURES).map(([k, m]) => (
+                {Object.entries(M).map(([k, m]) => (
                   <MenuItem key={k} value={k}>
                     {m.label}
                   </MenuItem>
@@ -601,7 +700,7 @@ export default function ProgrammeMap() {
             <FormControlLabel control={<Switch checked={streets} onChange={(e) => setStreets(e.target.checked)} />} label="Street map" />
           </Stack>
           <Typography variant="caption" color="text.secondary">
-            {MEASURES[measure].help}. Period: {from ? dayjs(from).format("D MMM YYYY") : "start"} – {to ? dayjs(to).format("D MMM YYYY") : "today"}.
+            {M[measure].help}. Period: {from ? dayjs(from).format("D MMM YYYY") : "start"} – {to ? dayjs(to).format("D MMM YYYY") : "today"}.
           </Typography>
         </CardContent>
       </Card>
@@ -613,8 +712,8 @@ export default function ProgrammeMap() {
           ["Sites with children", fmt(inView.length), null],
           ["New admissions", fmt(total.admissions), null],
           ["In treatment now", fmt(total.inTreatment), null],
-          ["Cure rate", pct(total.cureRate), total.cureRate === null ? null : rateColor("cureRate", total.cureRate)],
-          ["Default rate", pct(total.defaultRate), total.defaultRate === null ? null : rateColor("defaultRate", total.defaultRate)],
+          [M.cureRate.label, pct(total.cureRate), total.cureRate === null ? null : rateColor("cureRate", total.cureRate)],
+          [M.defaultRate.label, pct(total.defaultRate), total.defaultRate === null ? null : rateColor("defaultRate", total.defaultRate)],
           ["Death rate", pct(total.deathRate), total.deathRate === null ? null : rateColor("deathRate", total.deathRate)],
           ...givenTotals.map(([l, v]) => [l.replace(" (", " given (").replace(/\)$/, ")"), fmt(v, 2), null]),
         ].map(([label, value, color]) => (
@@ -634,7 +733,7 @@ export default function ProgrammeMap() {
       <Box sx={{ display: "grid", gap: 2.5, gridTemplateColumns: { xs: "minmax(0,1fr)", lg: "minmax(0, 1.75fr) minmax(0, 1fr)" } }}>
         <Card sx={{ overflow: "hidden", position: "relative" }}>
           <Box sx={{ height: { xs: 460, md: 640 }, position: "relative" }}>
-            <MapContainer bounds={SSD_BOUNDS} style={{ height: "100%", width: "100%", background: "#E9EFF2" }} zoomSnap={0.25} scrollWheelZoom attributionControl>
+            <MapContainer key={code || "map"} bounds={cfg.bounds} style={{ height: "100%", width: "100%", background: "#E9EFF2" }} zoomSnap={0.25} scrollWheelZoom attributionControl>
               {streets ? (
                 <TileLayer
                   url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -644,14 +743,14 @@ export default function ProgrammeMap() {
                 />
               ) : null}
               <FitTo bounds={bounds} boundsKey={boundsKey} token={fitToken} />
-              {geo.counties ? <GeoJSON key={`c-${geoKey}`} data={geo.counties} style={countyStyle} onEachFeature={onCounty} /> : null}
+              {geo.counties ? <GeoJSON key={`c-${code}-${geoKey}`} data={geo.counties} style={countyStyle} onEachFeature={onCounty} /> : null}
               {geo.states ? (
                 <GeoJSON
-                  key="states"
+                  key={`states-${code}`}
                   data={geo.states}
-                  style={() => ({ color: "#2F4450", weight: 2.2, fill: false })}
+                  style={cfg.outerStyle}
                   interactive={false}
-                  attribution="Boundaries: OCHA / NBS South Sudan (2020) via geoBoundaries, CC BY 3.0 IGO"
+                  attribution={cfg.attribution}
                 />
               ) : null}
               <Pane name="labels" style={{ zIndex: 640, pointerEvents: "none" }}>
@@ -667,7 +766,7 @@ export default function ProgrammeMap() {
               </Pane>
               <Pane name="sites" style={{ zIndex: 650 }}>
                 {showIdle
-                  ? (data?.idleSites || [])
+                  ? (idleSites)
                       .filter((s) => s.latitude !== null && s.longitude !== null)
                       .map((s) => (
                         <CircleMarker key={`idle-${s.name}`} center={[s.latitude, s.longitude]} radius={3.5} pathOptions={{ color: "#7A8A93", weight: 1, fillColor: "#FFFFFF", fillOpacity: 1 }}>
@@ -703,7 +802,7 @@ export default function ProgrammeMap() {
                         <Tooltip direction="top" offset={[0, -r]}>
                           <b>{s.name}</b> · {s.county}
                           <br />
-                          {MEASURES[measure].label}: <b>{isRate ? pct(s.value) : fmt(s.value, 2)}</b>
+                          {M[measure].label}: <b>{isRate ? pct(s.value) : fmt(s.value, 2)}</b>
                           {isRate ? ` (${s.t.exits} discharged)` : ""}
                         </Tooltip>
                       </CircleMarker>
@@ -711,10 +810,10 @@ export default function ProgrammeMap() {
                   })}
               </Pane>
             </MapContainer>
-            <Legend measure={measure} max={maxValue} commodityLabel={commodityLabel} />
+            <Legend measure={measure} max={maxValue} label={measure === "given" ? commodityLabel : M[measure].label} areaPlural={cfg.areaPlural} />
             <Stack direction="row" spacing={1} sx={{ position: "absolute", top: 12, right: 12, zIndex: 500 }}>
               {countyFocus ? (
-                <Chip color="primary" label={`County: ${countyByKey.get(countyFocus)?.name || focusFeature?.properties.name || ""}`} onDelete={() => setCountyFocus(null)} sx={{ bgcolor: "primary.main", boxShadow: 2 }} />
+                <Chip color="primary" label={`${cfg.area}: ${countyByKey.get(countyFocus)?.name || focusFeature?.properties.name || ""}`} onDelete={() => setCountyFocus(null)} sx={{ bgcolor: "primary.main", boxShadow: 2 }} />
               ) : null}
               <Button
                 size="small"
@@ -738,7 +837,7 @@ export default function ProgrammeMap() {
 
         <Card sx={{ display: "flex", flexDirection: "column", minHeight: { lg: 640 } }}>
           <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="fullWidth">
-            <Tab label={`Counties (${counties.length})`} />
+            <Tab label={`${cfg.areaPlural} (${counties.length})`} />
             <Tab label={`Sites (${ranking.length})`} />
             <Tab label="Site" disabled={!selected} />
           </Tabs>
@@ -749,10 +848,10 @@ export default function ProgrammeMap() {
                 <Table size="small" stickyHeader sx={{ "&&": { minWidth: 0 }, "& th, & td": { px: { xs: 0.75, md: 1.5 } }, "& th": { fontSize: { xs: 11, md: 12 }, whiteSpace: "normal" } }}>
                   <TableHead>
                     <TableRow>
-                      <TableCell>County</TableCell>
+                      <TableCell>{cfg.area}</TableCell>
                       <TableCell align="right">Sites</TableCell>
-                      <TableCell align="right">{isRate ? MEASURES[measure].label : measure === "given" ? commodityLabel : MEASURES[measure].label}</TableCell>
-                      {!isRate ? <TableCell align="right">Cure</TableCell> : null}
+                      <TableCell align="right">{isRate ? M[measure].label : measure === "given" ? commodityLabel : M[measure].label}</TableCell>
+                      {!isRate ? <TableCell align="right">{cfg.words.cured || "Cure"}</TableCell> : null}
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -784,7 +883,7 @@ export default function ProgrammeMap() {
                   <TableHead>
                     <TableRow>
                       <TableCell>Site</TableCell>
-                      <TableCell align="right">{measure === "given" ? commodityLabel : MEASURES[measure].label}</TableCell>
+                      <TableCell align="right">{measure === "given" ? commodityLabel : M[measure].label}</TableCell>
                       <TableCell align="right">In treatment</TableCell>
                     </TableRow>
                   </TableHead>
@@ -822,7 +921,7 @@ export default function ProgrammeMap() {
             {tab === 2 && selected ? (
               (() => {
                 const s = sites.find((x) => x.key === selected);
-                return s ? <SiteCard site={s} programs={programs} commodity={commodityKey} onOpen={() => openChildren(s)} /> : <Typography color="text.secondary">Choose a site on the map.</Typography>;
+                return s ? <SiteCard site={s} programs={programs} commodity={commodityKey} onOpen={() => openChildren(s)} M={M} words={cfg.words} /> : <Typography color="text.secondary">Choose a site on the map.</Typography>;
               })()
             ) : null}
 
@@ -831,7 +930,7 @@ export default function ProgrammeMap() {
       </Box>
 
       <Typography variant="caption" color="text.secondary">
-        Figures come from the DHIS2 programme records copied into Anchor (updated hourly). Admissions and discharge rates use the selected period; &quot;in treatment&quot; and
+        {cfg.footer} Admissions and discharge rates use the selected period; &quot;in treatment&quot; and
         &quot;missed appointments&quot; are as of today. Rates are only meaningful with enough discharges: a site with few exits can swing widely. Prevalence needs population
         figures, which are not part of these records; the map shows caseload.
       </Typography>

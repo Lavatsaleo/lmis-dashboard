@@ -43,6 +43,7 @@ import RuleOutlinedIcon from "@mui/icons-material/RuleOutlined";
 import QrCode2Icon from "@mui/icons-material/QrCode2";
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import LockResetIcon from "@mui/icons-material/LockReset";
+import CloudSyncOutlinedIcon from "@mui/icons-material/CloudSyncOutlined";
 import SyncAltIcon from "@mui/icons-material/SyncAlt";
 import MapOutlinedIcon from "@mui/icons-material/MapOutlined";
 import { RequiredPasswordChange } from "../pages/ChangePassword";
@@ -141,12 +142,9 @@ export default function DashboardLayout() {
           { label: "Children", to: "/children", icon: <ChildCareIcon /> },
           { label: "Duplicate Review", to: "/duplicate-cases", icon: <ContentCopyOutlinedIcon /> },
           { label: "Reports", to: "/reports", icon: <AssessmentIcon /> },
-          ...(dhis2ChildrenVisible
-            ? [
-                { label: "Children (DHIS2)", to: "/dhis2-children", icon: <ChildCareIcon /> },
-                { label: "Programme map", to: "/programme-map", icon: <MapOutlinedIcon /> },
-              ]
-            : []),
+          // One map page: Kenya's from Anchor records, South Sudan's from DHIS2.
+          { label: "Programme map", to: "/programme-map", icon: <MapOutlinedIcon /> },
+          ...(dhis2ChildrenVisible ? [{ label: "Children (DHIS2)", to: "/dhis2-children", icon: <ChildCareIcon /> }] : []),
         ],
       });
     } else if (dhis2ChildrenVisible) {
@@ -168,6 +166,10 @@ export default function DashboardLayout() {
       }
       admin.push({ label: "Users", to: "/users", icon: <PeopleAltIcon /> });
       admin.push({ label: "Audit Log", to: "/audit-log", icon: <HistoryIcon /> });
+      // Per-site DHIS2 sync status for support officers (countries using DHIS2).
+      if (dhis2ChildrenVisible) {
+        admin.push({ label: "DHIS2 sync", to: "/dhis2-sync", icon: <CloudSyncOutlinedIcon /> });
+      }
       // DHIS2 connection and settings: Super Admin only.
       if (role === "SUPER_ADMIN") {
         admin.push({ label: "DHIS2 Integration", to: "/dhis2", icon: <SyncAltIcon /> });

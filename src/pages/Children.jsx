@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { api } from "../api/client";
-import { Link as RouterLink } from "react-router-dom";
+import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import {
   Card,
   CardContent,
@@ -100,7 +100,9 @@ export default function Children() {
 
   const [q, setQ] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [facilityId, setFacilityId] = useState("");
+  // ?facility=<id> (from the programme map) opens the list filtered to that facility.
+  const [searchParams] = useSearchParams();
+  const [facilityId, setFacilityId] = useState(() => searchParams.get("facility") || "");
 
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
