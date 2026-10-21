@@ -44,6 +44,7 @@ import QrCode2Icon from "@mui/icons-material/QrCode2";
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import LockResetIcon from "@mui/icons-material/LockReset";
 import SyncAltIcon from "@mui/icons-material/SyncAlt";
+import MapOutlinedIcon from "@mui/icons-material/MapOutlined";
 import { RequiredPasswordChange } from "../pages/ChangePassword";
 
 import anchorMark from "../assets/anchor-mark.png";
@@ -140,13 +141,21 @@ export default function DashboardLayout() {
           { label: "Children", to: "/children", icon: <ChildCareIcon /> },
           { label: "Duplicate Review", to: "/duplicate-cases", icon: <ContentCopyOutlinedIcon /> },
           { label: "Reports", to: "/reports", icon: <AssessmentIcon /> },
-          ...(dhis2ChildrenVisible ? [{ label: "Children (DHIS2)", to: "/dhis2-children", icon: <ChildCareIcon /> }] : []),
+          ...(dhis2ChildrenVisible
+            ? [
+                { label: "Children (DHIS2)", to: "/dhis2-children", icon: <ChildCareIcon /> },
+                { label: "Programme map", to: "/programme-map", icon: <MapOutlinedIcon /> },
+              ]
+            : []),
         ],
       });
     } else if (dhis2ChildrenVisible) {
       groups.push({
         label: "Clinical",
-        items: [{ label: "Children", to: "/dhis2-children", icon: <ChildCareIcon /> }],
+        items: [
+          { label: "Programme map", to: "/programme-map", icon: <MapOutlinedIcon /> },
+          { label: "Children", to: "/dhis2-children", icon: <ChildCareIcon /> },
+        ],
       });
     }
 

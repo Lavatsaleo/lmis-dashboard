@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { useOutletContext, useSearchParams } from "react-router-dom";
 import dayjs from "dayjs";
 import {
   Alert,
@@ -254,7 +254,10 @@ export default function Dhis2Children() {
   // that does (their own default, Kenya, has none). The choice here is local to
   // this page and does not change the country on the stock pages.
   const [allPrograms, setAllPrograms] = useState(null);
-  const [picked, setPicked] = useState("");
+  // ?country= and ?site= come from the programme map ("Open this site's children").
+  const [searchParams] = useSearchParams();
+  const [picked, setPicked] = useState(() => searchParams.get("country") || "");
+  const [wantedSite, setWantedSite] = useState(() => searchParams.get("site") || "");
   useEffect(() => {
     if (!scope.isSuperAdmin) return undefined;
     let alive = true;
@@ -309,11 +312,22 @@ export default function Dhis2Children() {
   useEffect(() => {
     if (!pid) return undefined;
     let alive = true;
-    api.get("/api/dhis2-children/sites", { params: { ...implParams, programId: pid } }).then((r) => alive && setSites(r.data || []));
+    api.get("/api/dhis2-children/sites", { params: { ...implParams, programId: pid } }).then((r) => {
+      if (!alive) return;
+      const rows = r.data || [];
+      setSites(rows);
+      if (wantedSite) {
+        const hit = rows.find((x) => x.orgUnitUid === wantedSite);
+        if (hit) {
+          setSite(hit);
+          setWantedSite("");
+        }
+      }
+    });
     return () => {
       alive = false;
     };
-  }, [pid, implParams]);
+  }, [pid, implParams, wantedSite]);
 
   // Wait until typing stops before searching.
   useEffect(() => {

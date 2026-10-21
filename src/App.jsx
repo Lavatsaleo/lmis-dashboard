@@ -27,6 +27,7 @@ import StockCountSheet, { StockCountList } from "./pages/StockCounts";
 import ChangePassword from "./pages/ChangePassword";
 import Dhis2Integration from "./pages/Dhis2Integration";
 import Dhis2Children from "./pages/Dhis2Children";
+import ProgrammeMap from "./pages/ProgrammeMap";
 import { clearSessionAndRedirect } from "./api/client";
 
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -144,6 +145,7 @@ export default function App() {
         <Route path="/children" element={<Children />} />
         <Route path="/children/:childId" element={<ChildDetails />} />
         <Route path="/dhis2-children" element={<Dhis2Children />} />
+        <Route path="/programme-map" element={<ProgrammeMap />} />
         <Route path="/duplicate-cases" element={<DuplicateCases />} />
         <Route path="/manifests" element={<Manifests />} />
         <Route path="/reports" element={<Reports />} />
