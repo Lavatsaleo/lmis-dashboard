@@ -81,6 +81,16 @@ function downloadExcelXml({ filename, sheetName, headers, rows }) {
   URL.revokeObjectURL(url);
 }
 
+function ageInMonths(dob, at) {
+  if (!dob || !at) return "";
+  const b = new Date(dob);
+  const e = new Date(at);
+  if (Number.isNaN(b.getTime()) || Number.isNaN(e.getTime())) return "";
+  let m = (e.getFullYear() - b.getFullYear()) * 12 + (e.getMonth() - b.getMonth());
+  if (e.getDate() < b.getDate()) m -= 1;
+  return Math.max(0, m);
+}
+
 export default function Children() {
   const [data, setData] = useState({ rows: [], total: 0, take: 10, skip: 0 });
   const [facilities, setFacilities] = useState([]);
@@ -199,7 +209,7 @@ export default function Children() {
         "Facility Code",
         "Facility Name",
         "Sex",
-        "Date of Birth",
+        "Age at Enrollment (months)",
         "Enrollment Date",
       ];
 
@@ -209,7 +219,8 @@ export default function Children() {
         "Facility Code": c.facility?.code || "",
         "Facility Name": c.facility?.name || "",
         Sex: c.sex || "",
-        "Date of Birth": formatDate(c.dateOfBirth),
+        // No date of birth in exports (it identifies the child): age in months instead.
+        "Age at Enrollment (months)": ageInMonths(c.dateOfBirth, c.enrollmentDate),
         "Enrollment Date": formatDate(c.enrollmentDate),
       }));
 

@@ -136,7 +136,37 @@ const LOCATION_KIND = { CENTRAL_WAREHOUSE: "Main warehouse", FIELD_BASE_WAREHOUS
 
 // Reprint QR labels for the boxes now at a warehouse or a site (for example
 // cartons that reached a site without labels). One A3 sheet set per location.
-function LabelsByLocation({ me }) {
+// Label size: carton labels (A4, 8 per sheet, 52 mm QR; fits the 395 x 285 x 195 mm
+// SQ-LNS carton) or the original small sheet (A3, 80 per sheet, 20 mm QR).
+const LABEL_FORMAT_KEY = "anchor.labelFormat";
+const readLabelFormat = () => {
+  try {
+    return window.localStorage.getItem(LABEL_FORMAT_KEY) === "small" ? "small" : "carton";
+  } catch {
+    return "carton";
+  }
+};
+const withFormat = (url, format) => `${url}${url.includes("?") ? "&" : "?"}format=${format}`;
+
+function LabelSizeCard({ value, onChange }) {
+  return (
+    <Card variant="outlined">
+      <CardContent sx={{ display: "grid", gap: 1.5 }}>
+        <Typography fontWeight={800}>Label size</Typography>
+        <ToggleButtonGroup size="small" exclusive value={value} onChange={(_, v) => v && onChange(v)} sx={{ flexWrap: "wrap" }}>
+          <ToggleButton value="carton">Carton label · A4, 8 per sheet · QR 52 mm</ToggleButton>
+          <ToggleButton value="small">Small · A3, 80 per sheet · QR 20 mm</ToggleButton>
+        </ToggleButtonGroup>
+        <Typography variant="caption" color="text.secondary">
+          Carton labels are 99.1 × 67.7 mm (A4 8-up label sheets such as Avery L7165, or plain A4 to cut out) and scan from about half a metre. Stick one on
+          the short end of each carton so it shows when cartons are stacked.
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LabelsByLocation({ me, labelFormat }) {
   const scope = useCountryScope(me);
   const scopeImpl = scope.implementationId;
   const scopeReady = scope.ready;
@@ -166,7 +196,7 @@ function LabelsByLocation({ me }) {
   const printLocation = async (r) => {
     setPrintErr("");
     setBusy(r.id);
-    const m = await openAuthenticatedFile(`/api/labels/locations/${r.id}/print/a3`, "application/pdf");
+    const m = await openAuthenticatedFile(withFormat(`/api/labels/locations/${r.id}/print/a3`, labelFormat), "application/pdf");
     setBusy("");
     if (m) setPrintErr(m);
   };
@@ -243,6 +273,7 @@ function LabelsByLocation({ me }) {
 
 export default function QrLabels() {
   const { me } = useOutletContext();
+  const [labelFormat, setLabelFormat] = useState(readLabelFormat);
   const [implementations, setImplementations] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
   const [warehouseId, setWarehouseId] = useState("");
@@ -328,7 +359,7 @@ export default function QrLabels() {
   const total = mode === "po" ? poTotal : freeQty;
 
   const print = async (orderId, query) => {
-    const m = await openAuthenticatedFile(`${labelSheetUrl(orderId)}${query}`, "application/pdf");
+    const m = await openAuthenticatedFile(withFormat(`${labelSheetUrl(orderId)}${query}`, labelFormat), "application/pdf");
     if (m) setErr(m);
   };
 
@@ -410,6 +441,17 @@ export default function QrLabels() {
         </CardContent>
       </Card>
 
+      <LabelSizeCard
+        value={labelFormat}
+        onChange={(v) => {
+          setLabelFormat(v);
+          try {
+            window.localStorage.setItem(LABEL_FORMAT_KEY, v);
+          } catch {
+            // remembered for this visit only
+          }
+        }}
+      />
       <PolicyCard implementations={implementations} me={me} onChanged={() => setReload((r) => r + 1)} />
       <MobileToolsCard implementations={implementations} me={me} onChanged={() => setReload((r) => r + 1)} />
 
@@ -611,7 +653,7 @@ export default function QrLabels() {
         </CardContent>
       </Card>
 
-      <LabelsByLocation me={me} />
+      <LabelsByLocation me={me} labelFormat={labelFormat} />
     </Box>
   );
 }
