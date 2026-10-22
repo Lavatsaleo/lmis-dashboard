@@ -166,9 +166,9 @@ export default function DashboardLayout() {
       }
       admin.push({ label: "Users", to: "/users", icon: <PeopleAltIcon /> });
       admin.push({ label: "Audit Log", to: "/audit-log", icon: <HistoryIcon /> });
-      // Per-site DHIS2 sync status for support officers (countries using DHIS2).
+      // Tablet (DHIS2 Capture) sync per site, for support officers (countries using DHIS2).
       if (dhis2ChildrenVisible) {
-        admin.push({ label: "DHIS2 sync", to: "/dhis2-sync", icon: <CloudSyncOutlinedIcon /> });
+        admin.push({ label: "Tablet sync", to: "/dhis2-sync", icon: <CloudSyncOutlinedIcon /> });
       }
       // DHIS2 connection and settings: Super Admin only.
       if (role === "SUPER_ADMIN") {

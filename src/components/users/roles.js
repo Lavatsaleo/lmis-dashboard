@@ -10,7 +10,9 @@ export const ROLES = ["SUPER_ADMIN", "COUNTRY_ADMIN", "WAREHOUSE_OFFICER", "FACI
 export const ADMIN_ROLES = ["SUPER_ADMIN", "COUNTRY_ADMIN"];
 
 /** Roles the signed-in admin may assign. */
-export const assignableRoles = (me) => (me?.role === "SUPER_ADMIN" ? ROLES : ROLES.filter((r) => !ADMIN_ROLES.includes(r)));
+// A Country Admin may make another Country Admin for their own country, never a Super Admin.
+export const assignableRoles = (me) =>
+  me?.role === "SUPER_ADMIN" ? ROLES : me?.role === "COUNTRY_ADMIN" ? ROLES.filter((r) => r !== "SUPER_ADMIN") : ROLES.filter((r) => !ADMIN_ROLES.includes(r));
 
 export const isAdminRole = (role) => ADMIN_ROLES.includes(role);
 

@@ -3,7 +3,6 @@ import { useOutletContext } from "react-router-dom";
 import dayjs from "dayjs";
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
   Card,
@@ -30,8 +29,6 @@ import {
   Typography,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
-import SyncIcon from "@mui/icons-material/Sync";
-import LinkIcon from "@mui/icons-material/Link";
 
 import { api } from "../api/client";
 import { useImplementationChoice } from "../components/implementationChoice";
@@ -41,67 +38,93 @@ const when = (s) => (s ? dayjs(String(s).slice(0, 19)).format("D MMM YYYY, HH:mm
 const dayOnly = (s) => (s ? dayjs(String(s).slice(0, 10)).format("D MMM YYYY") : "—");
 const ago = (days) => (days === null || days === undefined ? "never" : days === 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`);
 const fmt = (n) => new Intl.NumberFormat().format(Number(n || 0));
-const sinceRun = (iso) => (iso ? dayjs(iso).format("D MMM, HH:mm") : "—");
+const wait = (h) => (h === null || h === undefined ? "—" : h < 1 ? "under 1 hour" : h < 24 ? `${Math.round(h)} h` : `${Math.round(h / 24)} day${Math.round(h / 24) === 1 ? "" : "s"}`);
+const share = (w) => (w.records ? Math.round((w.late / w.records) * 100) : 0);
 
-const THRESHOLDS = [3, 7, 14, 30];
-const RECENT_DAYS = 3;
+const QUIET_DAYS = [3, 7, 14, 30];
+// A site struggles when a quarter of its records (at least 3) reach DHIS2 a day
+// or more after entry, or one waited 3 days or more.
+const struggling = (w) => (w.late >= 3 && share(w) >= 25) || (w.maxDelayHours ?? 0) >= 72;
 
-/** ok | late | stale | never, from days since the last record reached DHIS2. */
-const statusOf = (s, limit) => (s.daysSince === null ? "never" : s.daysSince <= RECENT_DAYS ? "ok" : s.daysSince <= limit ? "late" : "stale");
+/** quiet | never | clock | struggling | ok */
+function statusOf(s, quietDays) {
+  if (s.daysSince === null) return "never";
+  if (s.daysSince > quietDays) return "quiet";
+  if (s.window.clockAhead) return "clock";
+  if (struggling(s.window)) return "struggling";
+  return "ok";
+}
 const STATUS = {
-  ok: { label: "Up to date", color: "success" },
-  late: { label: "Late", color: "warning" },
-  stale: { label: "Not synced", color: "error" },
+  ok: { label: "Syncing well", color: "success" },
+  struggling: { label: "Records arrive late", color: "warning" },
+  clock: { label: "Tablet clock wrong", color: "warning" },
+  quiet: { label: "No data", color: "error" },
   never: { label: "Never sent data", color: "default" },
 };
-const PROBLEM_LABEL = { NOT_LINKED: "Not linked to Anchor", SHORTFALL: "Sachets not in stock", NOT_ASSIGNED: "Stock not sent" };
-const ANCHOR = {
-  COPIED: { label: "In Anchor", color: "success" },
-  OLDER: { label: "Update pending", color: "warning" },
-  MISSING: { label: "Not in Anchor yet", color: "warning" },
-  NOT_LINKED: { label: "Not counted: site not linked", color: "error" },
-  NOTHING_TO_COUNT: { label: "Nothing to count", color: "default" },
-};
 
-/** A sync error in plain words, for support officers. */
-function explain(error) {
-  const e = String(error || "");
-  if (!e) return null;
-  if (/not configured|DHIS2_URL/i.test(e)) return "The DHIS2 connection is not set up on the Anchor server.";
-  if (/fetch failed|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket|network|timed? ?out/i.test(e)) return "Anchor could not reach DHIS2 (internet or DHIS2 down). It tries again automatically every hour.";
-  if (/\b401\b|\b403\b|unauthori|forbidden/i.test(e)) return "DHIS2 refused Anchor's access token. A Super Admin needs to renew it on the DHIS2 Integration page.";
-  if (/not assigned/i.test(e)) return "Some sites are not in the DHIS2 stock data set, so their stock could not be sent. A DHIS2 administrator adds them to the data set.";
-  if (/\b409\b|conflict/i.test(e)) return "DHIS2 refused some values. Usually a site missing from the stock data set or a period that is closed for entry.";
-  if (/Choose the DHIS2 program/i.test(e)) return "The DHIS2 dispensing program is not chosen yet (DHIS2 Integration page).";
-  return e;
-}
-
-function Problem({ title, children, severity = "warning" }) {
+function Advice({ title, severity = "warning", children }) {
   return (
     <Alert severity={severity} sx={{ "& .MuiAlert-message": { width: "100%" } }}>
       <Typography variant="body2" fontWeight={800}>
         {title}
       </Typography>
-      <Box sx={{ mt: 0.5, display: "grid", gap: 1 }}>{children}</Box>
+      <Box sx={{ mt: 0.5, display: "grid", gap: 0.75 }}>{children}</Box>
     </Alert>
   );
 }
 
-function SiteDrawer({ site, limit, implParams, onClose, onChanged }) {
-  const [log, setLog] = useState({ key: null, data: null, error: "" });
-  const [resync, setResync] = useState({ busy: false, result: null, error: "" });
-  const [options, setOptions] = useState([]);
-  const [linkTo, setLinkTo] = useState(null);
-  const [linking, setLinking] = useState({ busy: false, msg: "", error: "" });
-  const notLinked = site.problems.some((p) => p.code === "NOT_LINKED") || !site.facility;
-  const status = statusOf(site, limit);
-  const shortfall = site.problems.find((p) => p.code === "SHORTFALL");
+function TabletTable({ rows, showSites }) {
+  return (
+    <TableContainer>
+      <Table size="small" sx={{ "&&": { minWidth: 0 }, "& th, & td": { px: { xs: 0.75, md: 1.25 }, verticalAlign: "top" }, "& th": { fontSize: 11 } }}>
+        <TableHead>
+          <TableRow>
+            <TableCell>User (tablet)</TableCell>
+            <TableCell>Last sync</TableCell>
+            <TableCell align="right">Records</TableCell>
+            <TableCell align="right">Arrived late</TableCell>
+            <TableCell align="right" sx={{ display: { xs: "none", sm: "table-cell" } }}>
+              Longest wait
+            </TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((t) => (
+            <TableRow key={t.username}>
+              <TableCell>
+                <Typography variant="body2" fontWeight={800} sx={{ wordBreak: "break-all" }}>
+                  {t.username}
+                </Typography>
+                {showSites ? (
+                  <Typography variant="caption" color="text.secondary">
+                    {t.sites.join(", ")}
+                  </Typography>
+                ) : null}
+                {t.clockAhead ? <Chip size="small" color="warning" label="Clock wrong" sx={{ mt: 0.5, display: "flex", width: "fit-content" }} /> : null}
+              </TableCell>
+              <TableCell sx={{ whiteSpace: "nowrap" }}>{when(t.lastArrival)}</TableCell>
+              <TableCell align="right">{fmt(t.records)}</TableCell>
+              <TableCell align="right">
+                <Typography variant="body2" fontWeight={800} color={struggling(t) ? "warning.dark" : "text.primary"}>
+                  {fmt(t.late)} ({share(t)}%)
+                </Typography>
+              </TableCell>
+              <TableCell align="right" sx={{ display: { xs: "none", sm: "table-cell" } }}>
+                {wait(t.maxDelayHours)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+}
 
-  // The sync log, read live from DHIS2; bump logTick to read it again.
-  const [logTick, setLogTick] = useState(0);
-  const logKey = `${site.orgUnitUid}|${logTick}`;
-  const logLoading = log.key !== logKey;
-  const loadLog = () => setLogTick((t) => t + 1);
+function SiteDrawer({ site, quietDays, days, implParams, onClose }) {
+  const [log, setLog] = useState({ key: null, data: null, error: "" });
+  const [tick, setTick] = useState(0);
+  const logKey = `${site.orgUnitUid}|${tick}`;
+  const loading = log.key !== logKey;
   useEffect(() => {
     let alive = true;
     api
@@ -112,49 +135,9 @@ function SiteDrawer({ site, limit, implParams, onClose, onChanged }) {
       alive = false;
     };
   }, [logKey, site.orgUnitUid, implParams]);
-
-  useEffect(() => {
-    if (site.facility) return undefined;
-    let alive = true;
-    api
-      .get("/api/dhis2-sync/link-options", { params: implParams })
-      .then((r) => alive && setOptions(r.data || []))
-      .catch(() => alive && setOptions([]));
-    return () => {
-      alive = false;
-    };
-  }, [site.facility, implParams]);
-
-  const runResync = async () => {
-    setResync({ busy: true, result: null, error: "" });
-    try {
-      const r = await api.post(`/api/dhis2-sync/sites/${site.orgUnitUid}/resync`, implParams);
-      setResync({ busy: false, result: r.data, error: "" });
-      loadLog();
-      onChanged();
-    } catch (e) {
-      setResync({ busy: false, result: null, error: e?.response?.data?.message || e.message });
-    }
-  };
-
-  const link = async () => {
-    if (!linkTo) return;
-    setLinking({ busy: true, msg: "", error: "" });
-    try {
-      const r = await api.put(`/api/dhis2-sync/sites/${site.orgUnitUid}/link`, { ...implParams, facilityId: linkTo.id });
-      setLinking({
-        busy: false,
-        error: "",
-        msg: `Linked to ${r.data.facility.name}.${r.data.backfill ? " Anchor is now counting this site's dispensing from the go-live date; this takes a minute." : ""}`,
-      });
-      onChanged();
-    } catch (e) {
-      setLinking({ busy: false, msg: "", error: e?.response?.data?.message || e.message });
-    }
-  };
-
+  const status = statusOf(site, quietDays);
+  const w = site.window;
   const records = log.data?.records || [];
-  const lateRecords = records.filter((r) => r.delayHours !== null && r.delayHours >= 24).length;
 
   return (
     <Box sx={{ width: { xs: "100vw", md: 720 }, maxWidth: "100vw", p: { xs: 2, md: 3 }, display: "grid", gap: 2, alignContent: "start" }}>
@@ -175,9 +158,9 @@ function SiteDrawer({ site, limit, implParams, onClose, onChanged }) {
       <Box sx={{ display: "grid", gap: 1, gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(4, minmax(0,1fr))" } }}>
         {[
           ["Status", <Chip key="s" size="small" color={STATUS[status].color} label={STATUS[status].label} />],
-          ["Last data in DHIS2", <span key="l">{site.lastReceivedAt ? `${ago(site.daysSince)}` : "never"}</span>],
-          ["Last visit recorded", dayOnly(site.lastVisitDate)],
-          ["Anchor location", site.facility ? site.facility.name : "Not linked"],
+          ["Last data reached DHIS2", ago(site.daysSince)],
+          [`Arrived late (${days} days)`, `${fmt(w.late)} of ${fmt(w.records)}`],
+          ["Typical / longest wait", `${wait(w.medianDelayHours)} / ${wait(w.maxDelayHours)}`],
         ].map(([k, v]) => (
           <Box key={k} sx={{ p: 1.25, borderRadius: 2, bgcolor: "action.hover" }}>
             <Typography variant="caption" color="text.secondary" fontWeight={800} component="div">
@@ -190,161 +173,99 @@ function SiteDrawer({ site, limit, implParams, onClose, onChanged }) {
         ))}
       </Box>
 
-      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
-        <Button variant="contained" startIcon={resync.busy ? <CircularProgress size={16} color="inherit" /> : <SyncIcon />} disabled={resync.busy} onClick={runResync}>
-          {resync.busy ? "Re-syncing…" : "Re-sync this site"}
-        </Button>
-        <Typography variant="caption" color="text.secondary">
-          Reads this site&apos;s children again from DHIS2{site.facility ? ", recounts its dispensing and sends its stock" : ""}. Safe to repeat.
-        </Typography>
-      </Stack>
-      {resync.error ? <Alert severity="error">{explain(resync.error)}</Alert> : null}
-      {resync.result ? (
-        <Alert severity={resync.result.steps.every((s) => s.ok || s.skipped) ? "success" : "warning"}>
-          {resync.result.steps.length ? (
-            resync.result.steps.map((s) => (
-              <div key={s.step}>
-                <b>{s.step}:</b>{" "}
-                {s.ok
-                  ? s.stats?.children !== undefined
-                    ? `done, ${fmt(s.stats.children)} children and ${fmt(s.stats.visits)} visits read`
-                    : s.stats?.events !== undefined
-                      ? `done, ${fmt(s.stats.events)} records read${s.stats.newShortfall ? `, ${fmt(s.stats.newShortfall)} sachets not in stock` : ""}`
-                      : "done"
-                  : s.skipped || explain(s.error)}
-              </div>
-            ))
-          ) : (
-            "Nothing to re-sync for this site."
-          )}
-        </Alert>
-      ) : null}
-
-      <Divider />
       <Typography variant="subtitle1" fontWeight={900}>
         What to check
       </Typography>
-      {status === "stale" || status === "never" ? (
-        <Problem title={status === "never" ? "No records from this site have reached DHIS2" : `No records have reached DHIS2 from this site for ${site.daysSince} days`} severity="error">
+      {status === "quiet" || status === "never" ? (
+        <Advice severity="error" title={status === "never" ? "No records from this site have ever reached DHIS2" : `Nothing from this site has reached DHIS2 for ${site.daysSince} days`}>
           <Typography variant="body2">
-            Call the site. On the tablet, check there is internet, open the DHIS2 Capture app and tap <b>Sync</b>. Records still on the tablet show a sync icon; records DHIS2 refused show a red icon:
-            open one to read the message, correct it and sync again.
+            Call the site. On the tablet: check there is internet (data bundle or Wi-Fi), open the DHIS2 Capture app and tap <b>Sync</b>.
           </Typography>
-          {status === "never" ? <Typography variant="body2">If the site has started, check its staff have DHIS2 accounts assigned to this site and the program.</Typography> : null}
-        </Problem>
-      ) : null}
-      {lateRecords ? (
-        <Problem title={`${lateRecords} recent record(s) reached DHIS2 a day or more after they were entered`}>
-          <Typography variant="body2">The tablet is often offline or not synced daily. Ask the site to sync at least once a day when it has a connection.</Typography>
-        </Problem>
-      ) : null}
-      {notLinked && site.problems.some((p) => p.code === "NOT_LINKED") ? (
-        <Problem title="Not linked to an Anchor location" severity="error">
-          <Typography variant="body2">Dispensing recorded in DHIS2 at this site cannot come off Anchor stock until the site is linked to its Anchor location.</Typography>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-            <Autocomplete
-              size="small"
-              options={options}
-              value={linkTo}
-              onChange={(_, v) => setLinkTo(v)}
-              getOptionLabel={(o) => `${o.name}${o.code ? ` (${o.code})` : ""}`}
-              groupBy={(o) => o.county || "Other"}
-              sx={{ flex: 1, minWidth: 220, bgcolor: "background.paper" }}
-              renderInput={(p) => <TextField {...p} label="Anchor location" placeholder="Type to search" />}
-            />
-            <Button variant="outlined" startIcon={<LinkIcon />} disabled={!linkTo || linking.busy} onClick={link}>
-              Link
-            </Button>
-          </Stack>
-          {linking.msg ? <Typography variant="body2" color="success.main">{linking.msg}</Typography> : null}
-          {linking.error ? <Typography variant="body2" color="error.main">{linking.error}</Typography> : null}
-          <Typography variant="caption">If the site is not in Anchor at all, ask the logistics team to add it first.</Typography>
-        </Problem>
-      ) : null}
-      {shortfall ? (
-        <Problem title={`${fmt(shortfall.sachets)} sachets recorded as given in DHIS2 when Anchor had no stock at this site`}>
           <Typography variant="body2">
-            Record the delivery or transfer to this site in Anchor (or correct the amount in DHIS2 if it was a typing error), then press <b>Re-sync this site</b>: the missing sachets come off stock once it is there.
+            If it still fails, a red sync icon shows next to the program: open the app&apos;s <b>Settings → Sync data</b> and its error log, and send a photo of the message to support.
           </Typography>
-          {(log.data?.shortfalls || []).length ? (
-            <Table size="small" sx={{ "&&": { minWidth: 0 } }}>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Visit date</TableCell>
-                  <TableCell align="right">Recorded</TableCell>
-                  <TableCell align="right">Not in stock</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {log.data.shortfalls.map((s) => (
-                  <TableRow key={s.eventUid}>
-                    <TableCell>{dayOnly(s.occurredAt)}</TableCell>
-                    <TableCell align="right">{fmt(s.reportedSachets)}</TableCell>
-                    <TableCell align="right">{fmt(s.shortfallSachets)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : null}
-        </Problem>
+          {status === "never" ? <Typography variant="body2">If the site has started, check its staff have DHIS2 accounts assigned to this site and to the program.</Typography> : null}
+        </Advice>
       ) : null}
-      {site.problems.some((p) => p.code === "NOT_ASSIGNED") ? (
-        <Problem title="Anchor could not send this site's stock to DHIS2">
+      {w.clockAhead ? (
+        <Advice title={`The tablet's date or time is wrong (${fmt(w.clockAhead)} record(s) dated in the future)`}>
           <Typography variant="body2">
-            The site is not in the DHIS2 stock data set. A DHIS2 administrator adds it (Maintenance → Data sets → the stock data set → organisation units), then press <b>Re-sync this site</b>.
+            On the tablet open Settings → Date &amp; time and switch on <b>automatic date and time</b> (and the right time zone). A wrong clock puts wrong dates on records and can stop the sync.
           </Typography>
-        </Problem>
+        </Advice>
       ) : null}
-      {status === "ok" && !site.problems.length && !lateRecords ? <Alert severity="success">Nothing to fix: this site&apos;s records are reaching DHIS2 and Anchor.</Alert> : null}
+      {status !== "quiet" && status !== "never" && struggling(w) ? (
+        <Advice title={`${fmt(w.late)} of ${fmt(w.records)} records reached DHIS2 a day or more after they were entered`}>
+          <Typography variant="body2">
+            Records wait on the tablet before they reach the server (typically {wait(w.medianDelayHours)}, up to {wait(w.maxDelayHours)}). The tablet is offline most of the time or is not synced
+            daily.
+          </Typography>
+          <Typography variant="body2">Ask the site to sync at least once a day where there is signal, and check the tablet has data credit. The users below show which tablet is behind.</Typography>
+        </Advice>
+      ) : null}
+      {status === "ok" ? <Alert severity="success">This site&apos;s records are reaching DHIS2 soon after they are entered.</Alert> : null}
+
+      {site.tablets.length ? (
+        <>
+          <Typography variant="subtitle1" fontWeight={900}>
+            Tablets at this site (last {days} days)
+          </Typography>
+          <TabletTable rows={site.tablets} />
+        </>
+      ) : null}
 
       <Divider />
       <Stack direction="row" justifyContent="space-between" alignItems="center">
         <Typography variant="subtitle1" fontWeight={900}>
           Sync log: latest records from this site
         </Typography>
-        <Button size="small" onClick={loadLog} disabled={logLoading}>
+        <Button size="small" onClick={() => setTick((t) => t + 1)} disabled={loading}>
           Refresh
         </Button>
       </Stack>
       <Typography variant="caption" color="text.secondary" sx={{ mt: -1.5 }}>
-        Read live from DHIS2. &quot;Entered on tablet&quot; is when the record was saved on the device; &quot;Reached DHIS2&quot; is when the sync delivered it.
+        Read live from DHIS2. &quot;Entered on tablet&quot; is when the record was saved on the tablet; &quot;Reached DHIS2&quot; is when the sync delivered it. Records still on the tablet do not show
+        until they sync.
       </Typography>
-      {logLoading ? (
+      {loading ? (
         <Stack direction="row" spacing={1} alignItems="center">
           <CircularProgress size={18} />
           <Typography variant="body2">Reading from DHIS2…</Typography>
         </Stack>
       ) : null}
-      {log.error ? <Alert severity="error">{explain(log.error)}</Alert> : null}
+      {log.error ? <Alert severity="error">{log.error}</Alert> : null}
       {log.data && !records.length ? <Typography color="text.secondary">DHIS2 has no records from this site in these programs.</Typography> : null}
       {records.length ? (
         <TableContainer>
           <Table size="small" sx={{ "&&": { minWidth: 0 }, "& th, & td": { px: { xs: 0.75, md: 1.25 }, verticalAlign: "top" }, "& th": { fontSize: 11 } }}>
             <TableHead>
               <TableRow>
-                <TableCell>Reached DHIS2</TableCell>
                 <TableCell>Entered on tablet</TableCell>
+                <TableCell>Reached DHIS2</TableCell>
                 <TableCell>Record</TableCell>
-                <TableCell>In Anchor</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {records.map((r) => (
                 <TableRow key={r.event}>
-                  <TableCell sx={{ whiteSpace: "nowrap" }}>
-                    <Typography variant="body2">{when(r.receivedAt)}</Typography>
-                  </TableCell>
                   <TableCell>
                     <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
-                      {when(r.capturedAt)}
+                      {when(r.enteredAt)}
                     </Typography>
-                    {r.delayHours !== null && r.delayHours >= 24 ? (
-                      <Chip size="small" color="warning" label={`${Math.round(r.delayHours / 24)} day(s) late`} sx={{ mt: 0.5 }} />
-                    ) : null}
                     {r.by ? (
                       <Typography variant="caption" color="text.secondary" component="div" sx={{ wordBreak: "break-all" }}>
                         {r.by}
                       </Typography>
+                    ) : null}
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
+                      {when(r.receivedAt)}
+                    </Typography>
+                    {r.clockAhead ? (
+                      <Chip size="small" color="warning" label="Tablet clock ahead" sx={{ mt: 0.5 }} />
+                    ) : r.delayHours !== null && r.delayHours >= 24 ? (
+                      <Chip size="small" color="warning" label={`${wait(r.delayHours)} later`} sx={{ mt: 0.5 }} />
                     ) : null}
                   </TableCell>
                   <TableCell>
@@ -355,44 +276,13 @@ function SiteDrawer({ site, limit, implParams, onClose, onChanged }) {
                     <Typography variant="caption" color="text.secondary">
                       {r.deleted ? "Deleted · " : ""}
                       {r.visitDate ? `Visit ${dayOnly(r.visitDate)}` : r.status === "SCHEDULE" ? "Scheduled visit" : r.status}
-                      {r.sachets ? ` · ${fmt(r.sachets.reported)} sachets${r.sachets.shortfall ? `, ${fmt(r.sachets.shortfall)} not in stock` : ""}` : ""}
                     </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Chip size="small" variant="outlined" color={ANCHOR[r.anchor]?.color || "default"} label={ANCHOR[r.anchor]?.label || r.anchor} />
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </TableContainer>
-      ) : null}
-      {records.some((r) => r.anchor === "MISSING" || r.anchor === "OLDER") ? (
-        <Typography variant="caption" color="text.secondary">
-          &quot;Not in Anchor yet&quot; and &quot;Update pending&quot; clear at the next hourly sync, or now with Re-sync this site. Admissions before the program&apos;s start date are not copied.
-        </Typography>
-      ) : null}
-
-      {(log.data?.runs || []).length ? (
-        <>
-          <Divider />
-          <Typography variant="subtitle1" fontWeight={900}>
-            Re-syncs of this site
-          </Typography>
-          {log.data.runs.map((r) => (
-            <Stack key={r.id} direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-              <Chip size="small" color={r.status === "SUCCESS" ? "success" : r.status === "RUNNING" ? "info" : "error"} label={r.status === "SUCCESS" ? "OK" : r.status === "RUNNING" ? "Running" : "Failed"} />
-              <Typography variant="body2">
-                {sinceRun(r.startedAt)} · {r.direction.replace("TRACKER_SITE:", "Children ").replace("PULL_SITE", "Dispensing").replace("PUSH_SITE", "Stock")}
-              </Typography>
-              {r.error ? (
-                <Typography variant="caption" color="error.main">
-                  {explain(r.error)}
-                </Typography>
-              ) : null}
-            </Stack>
-          ))}
-        </>
       ) : null}
     </Box>
   );
@@ -419,68 +309,62 @@ export default function Dhis2SyncStatus() {
   const [picked, setPicked] = useState("");
   const country = countries.find((c) => c.id === picked) || countries[0] || null;
   const countryId = country?.id || "";
-  const implParams = useMemo(() => (isSuperAdmin && countryId ? { implementationId: countryId } : {}), [isSuperAdmin, countryId]);
   const ready = isSuperAdmin ? !!countryId : true;
 
-  const [limit, setLimitState] = useState(() => {
+  const [quietDays, setQuietState] = useState(() => {
     try {
-      return Number(localStorage.getItem("anchor.syncLimit")) || 7;
+      return Number(localStorage.getItem("anchor.syncQuietDays")) || 7;
     } catch {
       return 7;
     }
   });
-  const setLimit = (v) => {
-    setLimitState(v);
+  const setQuietDays = (v) => {
+    setQuietState(v);
     try {
-      localStorage.setItem("anchor.syncLimit", String(v));
+      localStorage.setItem("anchor.syncQuietDays", String(v));
     } catch {
       /* storage unavailable */
     }
   };
+  const [days, setDays] = useState(30);
+  const implParams = useMemo(() => (isSuperAdmin && countryId ? { implementationId: countryId } : {}), [isSuperAdmin, countryId]);
+  const params = useMemo(() => ({ ...implParams, days }), [implParams, days]);
   const [tab, setTab] = useState(0);
   const [show, setShow] = useState("attention");
   const [county, setCounty] = useState("");
   const [search, setSearch] = useState("");
   const [openKey, setOpenKey] = useState(null);
-  const [reload, setReload] = useState(0);
   const [result, setResult] = useState({ key: null, data: null, error: "" });
 
-  const key = JSON.stringify({ ...implParams, reload });
+  const key = JSON.stringify(params);
   useEffect(() => {
     if (!ready) return undefined;
     let alive = true;
-    const k = JSON.stringify({ ...implParams, reload });
+    const k = JSON.stringify(params);
     api
-      .get("/api/dhis2-sync/sites", { params: implParams })
+      .get("/api/dhis2-sync/sites", { params })
       .then((r) => alive && setResult({ key: k, data: r.data, error: "" }))
       .catch((e) => alive && setResult({ key: k, data: null, error: e?.response?.data?.message || e.message }));
     return () => {
       alive = false;
     };
-  }, [implParams, ready, reload]);
+  }, [params, ready]);
   const data = result.data;
   const loading = result.key !== key;
-  const sites = useMemo(() => (data?.sites || []).map((s) => ({ ...s, status: statusOf(s, limit) })), [data, limit]);
+  const sites = useMemo(() => (data?.sites || []).map((s) => ({ ...s, status: statusOf(s, quietDays) })), [data, quietDays]);
 
   const counties = [...new Set(sites.map((s) => s.county).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const counts = {
-    ok: sites.filter((s) => s.status === "ok").length,
-    late: sites.filter((s) => s.status === "late").length,
-    stale: sites.filter((s) => s.status === "stale").length,
-    never: sites.filter((s) => s.status === "never").length,
-    problems: sites.filter((s) => s.problems.length).length,
-  };
-  const needsAttention = (s) => s.status === "stale" || s.status === "never" || s.problems.length > 0;
+  const count = (k) => sites.filter((s) => s.status === k).length;
+  const attention = (s) => s.status !== "ok";
   const term = search.trim().toLowerCase();
+  const rank = { quiet: 0, struggling: 1, clock: 2, never: 3, ok: 4 };
   const shown = sites
-    .filter((s) => (show === "all" ? true : show === "attention" ? needsAttention(s) : show === "problems" ? s.problems.length > 0 : s.status === show))
+    .filter((s) => (show === "all" ? true : show === "attention" ? attention(s) : s.status === show))
     .filter((s) => !county || s.county === county)
-    .filter((s) => !term || `${s.name} ${s.payam || ""} ${s.facility?.name || ""}`.toLowerCase().includes(term))
-    .sort((a, b) => (b.daysSince ?? 1e6) - (a.daysSince ?? 1e6) || a.name.localeCompare(b.name));
+    .filter((s) => !term || `${s.name} ${s.payam || ""} ${s.tablets.map((t) => t.username).join(" ")}`.toLowerCase().includes(term))
+    .sort((a, b) => rank[a.status] - rank[b.status] || (b.daysSince ?? -1) - (a.daysSince ?? -1) || share(b.window) - share(a.window) || a.name.localeCompare(b.name));
+  const tablets = (data?.tablets || []).filter((t) => !term || `${t.username} ${t.sites.join(" ")}`.toLowerCase().includes(term));
   const open = sites.find((s) => s.orgUnitUid === openKey) || null;
-
-  const pull = (data?.latestRuns || []).find((r) => r.direction === "PULL");
-  const failed = (data?.latestRuns || []).filter((r) => r.status === "FAILED");
 
   return (
     <Box sx={{ display: "grid", gap: 2.5, gridTemplateColumns: "minmax(0, 1fr)" }}>
@@ -489,17 +373,18 @@ export default function Dhis2SyncStatus() {
           <Stack direction={{ xs: "column", md: "row" }} spacing={2} justifyContent="space-between" alignItems={{ xs: "stretch", md: "center" }}>
             <Box>
               <Typography variant="h5" fontWeight={900}>
-                DHIS2 sync
+                Tablet sync
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                When each site&apos;s records last reached DHIS2, what is stopping them, and a re-sync per site. Click a site for its sync log.
+                How records from the DHIS2 Capture app on each site&apos;s tablets are reaching the DHIS2 server: sites that have gone quiet, records that wait days on a tablet, tablets with a
+                wrong clock. Click a site for its sync log.
               </Typography>
             </Box>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
               {isSuperAdmin && countries.length > 1 ? (
-                <FormControl size="small" sx={{ minWidth: 180 }}>
+                <FormControl size="small" sx={{ minWidth: 170 }}>
                   <InputLabel>Country</InputLabel>
-                  <Select label="Country" value={country?.id || ""} onChange={(e) => setPicked(e.target.value)}>
+                  <Select label="Country" value={countryId} onChange={(e) => setPicked(e.target.value)}>
                     {countries.map((c) => (
                       <MenuItem key={c.id} value={c.id}>
                         {c.country?.name || c.name}
@@ -508,199 +393,186 @@ export default function Dhis2SyncStatus() {
                   </Select>
                 </FormControl>
               ) : null}
-              <FormControl size="small" sx={{ minWidth: 220 }}>
-                <InputLabel>Not synced means no data for</InputLabel>
-                <Select label="Not synced means no data for" value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
-                  {THRESHOLDS.map((d) => (
+              <FormControl size="small" sx={{ minWidth: 150 }}>
+                <InputLabel>Look back</InputLabel>
+                <Select label="Look back" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+                  {[14, 30, 60, 90].map((d) => (
                     <MenuItem key={d} value={d}>
-                      more than {d} days
+                      {d} days
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 190 }}>
+                <InputLabel>&quot;No data&quot; after</InputLabel>
+                <Select label='"No data" after' value={quietDays} onChange={(e) => setQuietDays(Number(e.target.value))}>
+                  {QUIET_DAYS.map((d) => (
+                    <MenuItem key={d} value={d}>
+                      {d} days without records
                     </MenuItem>
                   ))}
                 </Select>
               </FormControl>
             </Stack>
           </Stack>
-          {failed.length ? (
-            <Alert severity="warning">
-              {failed.map((r) => (
-                <div key={r.id}>
-                  <b>{r.direction.replace("TRACKER:", "Children ").replace("PULL", "Dispensing from DHIS2").replace("PUSH", "Stock to DHIS2")}</b> failed at {sinceRun(r.startedAt)}: {explain(r.error)}
-                </div>
-              ))}
-            </Alert>
-          ) : null}
+          {data?.liveError ? <Alert severity="warning">Could not read the latest records from DHIS2 ({data.liveError}). Showing the last data Anchor has copied.</Alert> : null}
           {isSuperAdmin && withDhis2 && !countries.length ? <Alert severity="info">No country uses DHIS2 programs yet.</Alert> : null}
           {result.error ? <Alert severity="error">{result.error}</Alert> : null}
         </CardContent>
       </Card>
 
-      <Box sx={{ display: "grid", gap: { xs: 1.5, sm: 2 }, gridTemplateColumns: { xs: "repeat(2, minmax(0,1fr))", md: "repeat(6, minmax(0,1fr))" } }}>
+      <Box sx={{ display: "grid", gap: { xs: 1.5, sm: 2 }, gridTemplateColumns: { xs: "repeat(2, minmax(0,1fr))", md: "repeat(5, minmax(0,1fr))" } }}>
         {[
-          ["ok", `Data in the last ${RECENT_DAYS} days`, counts.ok, "success.main"],
-          ["late", `Late (${RECENT_DAYS + 1}–${limit} days)`, counts.late, "warning.main"],
-          ["stale", `Not synced (> ${limit} days)`, counts.stale, "error.main"],
-          ["never", "Never sent data", counts.never, "text.primary"],
-          ["problems", "Sites with problems", counts.problems, counts.problems ? "error.main" : "text.primary"],
-        ].map(([k, label, value, color]) => (
-          <Card key={k} onClick={() => setShow(k)} sx={{ cursor: "pointer", opacity: loading ? 0.6 : 1, outline: show === k ? "2px solid" : "none", outlineColor: "primary.main" }}>
+          ["ok", "Syncing well", "success.main"],
+          ["struggling", "Records arrive late", "warning.dark"],
+          ["quiet", `No data for > ${quietDays} days`, "error.main"],
+          ["clock", "Tablet clock wrong", "warning.dark"],
+          ["never", "Never sent data", "text.primary"],
+        ].map(([k, label, color]) => (
+          <Card
+            key={k}
+            onClick={() => {
+              setShow(k);
+              setTab(0);
+            }}
+            sx={{ cursor: "pointer", opacity: loading ? 0.6 : 1, outline: show === k ? "2px solid" : "none", outlineColor: "primary.main" }}
+          >
             <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
               <Typography variant="caption" color="text.secondary" fontWeight={800}>
                 {label}
               </Typography>
               <Typography variant="h5" fontWeight={900} sx={{ color }}>
-                {fmt(value)}
+                {loading && !data ? "…" : fmt(count(k))}
               </Typography>
             </CardContent>
           </Card>
         ))}
-        <Card sx={{ opacity: loading ? 0.6 : 1 }}>
-          <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-            <Typography variant="caption" color="text.secondary" fontWeight={800}>
-              Anchor last read DHIS2
-            </Typography>
-            <Typography variant="body1" fontWeight={900} sx={{ color: pull?.status === "FAILED" ? "error.main" : "text.primary", mt: 0.5 }}>
-              {sinceRun((data?.latestRuns || []).map((r) => r.startedAt).sort().pop())}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              every {data?.intervalMinutes || 60} min
-            </Typography>
-          </CardContent>
-        </Card>
       </Box>
 
       <Card>
         <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ px: 1 }}>
           <Tab label={`Sites (${sites.length})`} />
-          <Tab label="Anchor sync runs" />
+          <Tab label={`Tablets (${(data?.tablets || []).length})`} />
         </Tabs>
         <Divider />
         <CardContent sx={{ display: "grid", gap: 2 }}>
-          {tab === 0 ? (
-            <>
-              <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} alignItems={{ xs: "stretch", md: "center" }}>
-                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                  {[
-                    ["attention", "Needs attention"],
-                    ["all", "All sites"],
-                    ["stale", "Not synced"],
-                    ["never", "Never sent data"],
-                    ["problems", "Problems"],
-                  ].map(([k, l]) => (
-                    <Chip key={k} label={l} color={show === k ? "primary" : "default"} variant={show === k ? "filled" : "outlined"} onClick={() => setShow(k)} />
-                  ))}
-                </Stack>
-                <Box sx={{ flexGrow: 1 }} />
-                <FormControl size="small" sx={{ minWidth: 180 }}>
-                  <InputLabel shrink>County</InputLabel>
-                  <Select label="County" notched displayEmpty value={county} onChange={(e) => setCounty(e.target.value)}>
-                    <MenuItem value="">All counties</MenuItem>
-                    {counties.map((c) => (
-                      <MenuItem key={c} value={c}>
-                        {c}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <TextField size="small" label="Search site" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} alignItems={{ xs: "stretch", md: "center" }}>
+            {tab === 0 ? (
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                {[
+                  ["attention", "Needs attention"],
+                  ["all", "All sites"],
+                ].map(([k, l]) => (
+                  <Chip key={k} label={l} color={show === k ? "primary" : "default"} variant={show === k ? "filled" : "outlined"} onClick={() => setShow(k)} />
+                ))}
+                {!["attention", "all"].includes(show) ? <Chip label={STATUS[show].label} color="primary" onDelete={() => setShow("attention")} /> : null}
               </Stack>
-              <TableContainer>
-                <Table size="small" sx={{ "&&": { minWidth: 0 }, "& th, & td": { px: { xs: 0.75, md: 1.5 } } }}>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Site</TableCell>
-                      <TableCell>Last data in DHIS2</TableCell>
-                      <TableCell sx={{ display: { xs: "none", md: "table-cell" } }}>Last visit</TableCell>
-                      <TableCell align="right" sx={{ display: { xs: "none", md: "table-cell" } }}>
-                        Records, 7 days
-                      </TableCell>
-                      <TableCell sx={{ display: { xs: "none", sm: "table-cell" } }}>Problems</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {shown.map((s) => (
-                      <TableRow key={s.orgUnitUid} hover sx={{ cursor: "pointer" }} onClick={() => setOpenKey(s.orgUnitUid)}>
-                        <TableCell>
-                          <Typography variant="body2" fontWeight={800}>
-                            {s.name}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {[s.county, s.payam].filter(Boolean).join(" · ")}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Chip size="small" color={STATUS[s.status].color} label={s.status === "never" ? STATUS.never.label : ago(s.daysSince)} />
-                          <Typography variant="caption" color="text.secondary" component="div" sx={{ display: { xs: "none", sm: "block" } }}>
-                            {s.lastReceivedAt ? when(s.lastReceivedAt) : ""}
-                          </Typography>
-                        </TableCell>
-                        <TableCell sx={{ display: { xs: "none", md: "table-cell" } }}>{dayOnly(s.lastVisitDate)}</TableCell>
-                        <TableCell align="right" sx={{ display: { xs: "none", md: "table-cell" } }}>
-                          {fmt(s.recentRecords)}
-                        </TableCell>
-                        <TableCell sx={{ display: { xs: "none", sm: "table-cell" } }}>
-                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                            {s.problems.map((p) => (
-                              <Chip key={p.code} size="small" variant="outlined" color="error" label={PROBLEM_LABEL[p.code] || p.code} />
-                            ))}
-                          </Stack>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!shown.length && !loading ? (
-                      <TableRow>
-                        <TableCell colSpan={5}>
-                          <Typography color="text.secondary" sx={{ py: 2 }}>
-                            {show === "attention" ? "Every site is sending data and nothing needs fixing." : "No sites match."}
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    ) : null}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-              <Typography variant="caption" color="text.secondary">
-                &quot;Last data in DHIS2&quot; is the latest record from the site that reached DHIS2, as copied into Anchor every {data?.intervalMinutes || 60} minutes (DHIS2 server time). Sites
-                assigned to the programs in DHIS2 that have sent nothing show as &quot;Never sent data&quot;.
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                One row per DHIS2 user account (normally one per tablet), most late records first.
               </Typography>
-            </>
-          ) : (
+            )}
+            <Box sx={{ flexGrow: 1 }} />
+            {tab === 0 ? (
+              <FormControl size="small" sx={{ minWidth: 170 }}>
+                <InputLabel shrink>County</InputLabel>
+                <Select label="County" notched displayEmpty value={county} onChange={(e) => setCounty(e.target.value)}>
+                  <MenuItem value="">All counties</MenuItem>
+                  {counties.map((c) => (
+                    <MenuItem key={c} value={c}>
+                      {c}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            ) : null}
+            <TextField size="small" label={tab === 0 ? "Search site or user" : "Search user or site"} value={search} onChange={(e) => setSearch(e.target.value)} />
+          </Stack>
+
+          {loading && !data ? (
+            <Stack direction="row" spacing={1} alignItems="center">
+              <CircularProgress size={18} />
+              <Typography variant="body2">Reading the last {days} days of records from DHIS2…</Typography>
+            </Stack>
+          ) : null}
+
+          {tab === 0 && data ? (
             <TableContainer>
-              <Table size="small" sx={{ "&&": { minWidth: 0 } }}>
+              <Table size="small" sx={{ "&&": { minWidth: 0 }, "& th, & td": { px: { xs: 0.75, md: 1.5 } } }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell>Sync</TableCell>
-                    <TableCell>Last run</TableCell>
-                    <TableCell>Result</TableCell>
+                    <TableCell>Site</TableCell>
+                    <TableCell>Last data reached DHIS2</TableCell>
+                    <TableCell align="right" sx={{ display: { xs: "none", md: "table-cell" } }}>
+                      Records, {days} days
+                    </TableCell>
+                    <TableCell align="right">Arrived late</TableCell>
+                    <TableCell align="right" sx={{ display: { xs: "none", sm: "table-cell" } }}>
+                      Longest wait
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {(data?.latestRuns || []).map((r) => (
-                    <TableRow key={r.id}>
+                  {shown.map((s) => (
+                    <TableRow key={s.orgUnitUid} hover sx={{ cursor: "pointer" }} onClick={() => setOpenKey(s.orgUnitUid)}>
                       <TableCell>
                         <Typography variant="body2" fontWeight={800}>
-                          {r.direction.startsWith("TRACKER:") ? `Children: ${r.direction.slice(8)}` : r.direction === "PULL" ? "Dispensing from DHIS2" : r.direction === "PUSH" ? "Stock to DHIS2" : r.direction}
+                          {s.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" component="div">
+                          {[s.county, s.payam].filter(Boolean).join(" · ")}
+                        </Typography>
+                        <Chip size="small" variant="outlined" color={STATUS[s.status].color} label={STATUS[s.status].label} sx={{ mt: 0.5 }} />
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" fontWeight={700} color={s.status === "quiet" ? "error.main" : "text.primary"}>
+                          {ago(s.daysSince)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: { xs: "none", sm: "block" } }}>
+                          {s.lastReceivedAt ? when(s.lastReceivedAt) : ""}
                         </Typography>
                       </TableCell>
-                      <TableCell>{sinceRun(r.startedAt)}</TableCell>
-                      <TableCell>
-                        <Chip size="small" color={r.status === "SUCCESS" ? "success" : r.status === "RUNNING" ? "info" : r.status === "PARTIAL" ? "warning" : "error"} label={r.status === "SUCCESS" ? "OK" : r.status.toLowerCase()} />
-                        {r.error ? (
-                          <Typography variant="caption" component="div" color="text.secondary" sx={{ mt: 0.5 }}>
-                            {explain(r.error)}
+                      <TableCell align="right" sx={{ display: { xs: "none", md: "table-cell" } }}>
+                        {fmt(s.window.records)}
+                      </TableCell>
+                      <TableCell align="right">
+                        {s.window.records ? (
+                          <Typography variant="body2" fontWeight={800} color={struggling(s.window) ? "warning.dark" : "text.primary"}>
+                            {fmt(s.window.late)} ({share(s.window)}%)
                           </Typography>
-                        ) : null}
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                      <TableCell align="right" sx={{ display: { xs: "none", sm: "table-cell" } }}>
+                        {wait(s.window.maxDelayHours)}
                       </TableCell>
                     </TableRow>
                   ))}
+                  {!shown.length && !loading ? (
+                    <TableRow>
+                      <TableCell colSpan={5}>
+                        <Typography color="text.secondary" sx={{ py: 2 }}>
+                          {show === "attention" ? "Every site's records are reaching DHIS2 soon after they are entered." : "No sites match."}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
                 </TableBody>
               </Table>
             </TableContainer>
-          )}
+          ) : null}
+          {tab === 1 && data ? <TabletTable rows={tablets} showSites /> : null}
+
+          <Typography variant="caption" color="text.secondary">
+            &quot;Arrived late&quot; counts records that reached DHIS2 a day or more after they were entered on the tablet, over the last {days} days. A tablet&apos;s own sync errors stay on the
+            tablet (DHIS2 does not receive them), so a struggling site is spotted by its late or missing records; its error log is in the app&apos;s settings. Times are DHIS2 server time.
+          </Typography>
         </CardContent>
       </Card>
 
       <Drawer anchor="right" open={!!open} onClose={() => setOpenKey(null)}>
-        {open ? <SiteDrawer key={open.orgUnitUid} site={open} limit={limit} implParams={implParams} onClose={() => setOpenKey(null)} onChanged={() => setReload((x) => x + 1)} /> : null}
+        {open ? <SiteDrawer key={open.orgUnitUid} site={open} quietDays={quietDays} days={days} implParams={implParams} onClose={() => setOpenKey(null)} /> : null}
       </Drawer>
     </Box>
   );
